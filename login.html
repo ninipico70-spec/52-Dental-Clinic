@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in – 52-Dental Clinic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css"></head>
+<body class="login-bg"><form class="login-card" id="f" autocomplete="on">
+<svg viewBox="0 0 24 24" fill="none" stroke="#3b82e8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v3"/></svg>
+<input id="email" type="email" placeholder="E-mail" required autocomplete="username" aria-label="E-mail">
+<input id="pw" type="password" placeholder="password" required autocomplete="current-password" aria-label="Password">
+<button class="btn" type="submit">sign in</button>
+<div class="alert" id="err" role="alert" hidden></div>
+</form>
+<script src="/js/config.js"></script>
+<script>
+if(localStorage.token) location.href='/';
+f.onsubmit=async e=>{e.preventDefault();err.hidden=true;
+ try{const r=await fetch(API_BASE+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value,password:pw.value})});
+  const d=await r.json(); if(!r.ok) throw new Error(d.error);
+  localStorage.token=d.token; localStorage.user=JSON.stringify(d.user); location.href='/';
+ }catch(x){err.textContent=x.message||'Could not reach the server.';err.hidden=false}};
+</script></body></html>
