@@ -22,7 +22,7 @@ function toast(msg, err) {
   document.body.append(t); setTimeout(() => t.remove(), 3200);
 }
 const tryDo = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
-const logo = '<img class="brand-logo" src="/img/logo.jpg" alt="52-Dental Clinic logo">';
+const logo = '<img class="brand-logo" src="/img/logo.png" alt="52-Dental Clinic logo">';
 const head = (sub = '') => `<div class="brand">${sub ? '' : logo}<h1>52-Dental Clinic</h1><hr></div>`;
 
 const routes = {
