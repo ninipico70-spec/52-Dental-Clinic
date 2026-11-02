@@ -22,7 +22,7 @@ function toast(msg, err) {
   document.body.append(t); setTimeout(() => t.remove(), 3200);
 }
 const tryDo = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
-const logo = `<svg viewBox="0 0 120 90" aria-hidden="true"><path d="M5 62C30 40 45 40 60 40s30 0 55 22C85 52 75 50 60 50S35 52 5 62Z" fill="#4aa3d4"/><path d="M60 5l4 18M60 5l-4 18M44 12l8 16M76 12l-8 16M32 24l12 12M88 24l-12 12" stroke="#4aa3d4" stroke-width="5" stroke-linecap="round"/><path d="M42 30c6-6 12-4 18-2 6-2 12-4 18 2 4 12-2 22-6 40-2 8-6 8-8-2-1-8-2-12-4-12s-3 4-4 12c-2 10-6 10-8 2-4-18-10-28-6-40Z" fill="#fff" stroke="#2d6a82" stroke-width="4"/></svg>`;
+const logo = '<img class="brand-logo" src="/img/logo.jpg" alt="52-Dental Clinic logo">';
 const head = (sub = '') => `<div class="brand">${sub ? '' : logo}<h1>52-Dental Clinic</h1><hr></div>`;
 
 const routes = {
