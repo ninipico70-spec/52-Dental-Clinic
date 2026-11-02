@@ -5,7 +5,20 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => '$' + (+n || 0).toFixed(2).replace(/\.00$/, '');
 const day = d => d ? String(d).slice(0, 10) : '';
-$('#uname').textContent = me.name || ''; $('#av').textContent = (me.name || '?')[0];
+function renderAvatar(photo, name) {
+  const avatar = $('#av');
+  avatar.replaceChildren();
+  if (photo) {
+    const image = document.createElement('img');
+    image.src = photo;
+    image.alt = `${name || 'User'} profile photo`;
+    avatar.append(image);
+  } else {
+    avatar.textContent = (name || '?')[0];
+  }
+}
+$('#uname').textContent = me.name || '';
+renderAvatar(me.photo, me.name);
 $('#out').onclick = e => { e.preventDefault(); localStorage.clear(); location.href = '/login.html'; };
 
 async function api(path, opt = {}) {
@@ -24,6 +37,13 @@ function toast(msg, err) {
 const tryDo = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 const logo = '<img class="brand-logo" src="/img/logo.png" alt="52-Dental Clinic logo">';
 const head = (sub = '') => `<div class="brand">${sub ? '' : logo}<h1>52-Dental Clinic</h1><hr></div>`;
+
+api('/me').then(profile => {
+  Object.assign(me, profile);
+  localStorage.user = JSON.stringify(me);
+  $('#uname').textContent = me.name || '';
+  renderAvatar(me.photo, me.name);
+}).catch(error => toast(`Could not load your profile: ${error.message}`, true));
 
 const routes = {
   async main() {
@@ -213,9 +233,62 @@ const routes = {
       <div class="panel"><table><thead><tr><th>Name</th><th>E-mail</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>${l.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td><td>${u.active ? 'Active' : 'Disabled'}</td><td>${u.id === me.id ? '' : `<button class="btn sm ${u.active ? 'red' : 'green'}" data-a="${u.id}:${u.active ? 0 : 1}">${u.active ? 'Disable' : 'Enable'}</button>`}</td></tr>`).join('')}</tbody></table></div>`;
   },
 
-  settings() {
-    setTimeout(() => $('#sf').onsubmit = tryDo(async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await api('/me/password', { method: 'POST', body: f }); e.target.reset(); toast('Password changed'); }));
-    return head() + `<form class="panel" id="sf" style="max-width:600px"><h2 class="title"><b>Settings</b></h2><label>Current password</label><input class="field" type="password" name="current" required autocomplete="current-password"><label style="margin-top:16px">New password (8+ characters)</label><input class="field" type="password" name="next" minlength="8" required autocomplete="new-password"><p style="text-align:center"><button class="btn">Change password</button></p></form>`;
+  async settings() {
+    const profile = await api('/me');
+    setTimeout(() => {
+      let photo = profile.photo || null;
+      let photoChanged = false;
+      const preview = $('#profilePreview');
+      const savePhoto = $('#savePhoto');
+      const fileInput = $('#photoFile');
+      fileInput.onchange = tryDo(async () => {
+        const [file] = fileInput.files;
+        if (!file) return;
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type))
+          throw new Error('Choose a JPG, PNG or WebP image.');
+        if (file.size > 10 * 1024 * 1024) throw new Error('Choose an image smaller than 10 MB.');
+        const bitmap = await createImageBitmap(file);
+        try {
+          const side = Math.min(bitmap.width, bitmap.height);
+          const canvas = document.createElement('canvas');
+          canvas.width = canvas.height = 256;
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('Your browser could not process this image.');
+          context.fillStyle = '#fff';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
+          photo = canvas.toDataURL('image/jpeg', 0.82);
+        } finally {
+          bitmap.close();
+        }
+        photoChanged = true;
+        preview.src = photo;
+        preview.hidden = false;
+        savePhoto.disabled = false;
+      });
+      $('#clearPhoto').onclick = () => {
+        photo = null;
+        photoChanged = true;
+        preview.removeAttribute('src');
+        preview.hidden = true;
+        savePhoto.disabled = false;
+        fileInput.value = '';
+      };
+      $('#profileForm').onsubmit = tryDo(async e => {
+        e.preventDefault();
+        if (!photoChanged) return;
+        const updated = await api('/me/profile', { method: 'PATCH', body: { photo } });
+        Object.assign(me, updated);
+        localStorage.user = JSON.stringify(me);
+        renderAvatar(me.photo, me.name);
+        photoChanged = false;
+        savePhoto.disabled = true;
+        toast('Profile photo saved');
+      });
+      $('#sf').onsubmit = tryDo(async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await api('/me/password', { method: 'POST', body: f }); e.target.reset(); toast('Password changed'); });
+    });
+    return head() + `<div class="panel" style="max-width:600px"><h2 class="title"><b>Profile</b></h2><form id="profileForm" class="profile-form"><img id="profilePreview" class="profile-preview" src="${esc(profile.photo || '')}" alt="Profile photo preview" ${profile.photo ? '' : 'hidden'}><label for="photoFile">Profile photo</label><input class="field" id="photoFile" type="file" accept="image/jpeg,image/png,image/webp"><p class="muted">JPG, PNG or WebP; images are cropped and resized before upload.</p><div class="row-actions"><button class="btn" id="savePhoto" disabled>Save photo</button><button class="btn dark" id="clearPhoto" type="button">Remove photo</button></div></form></div>
+      <form class="panel" id="sf" style="max-width:600px"><h2 class="title"><b>Change password</b></h2><label>Current password</label><input class="field" type="password" name="current" required autocomplete="current-password"><label style="margin-top:16px">New password (8+ characters)</label><input class="field" type="password" name="next" minlength="8" required autocomplete="new-password"><p style="text-align:center"><button class="btn">Change password</button></p></form>`;
   },
 };
 

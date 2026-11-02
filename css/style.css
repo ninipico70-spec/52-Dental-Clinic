@@ -19,6 +19,7 @@ main{flex:1;padding:24px 40px 60px;min-width:0}
 aside{width:300px;background:var(--side);color:#fff;position:sticky;top:0;height:100vh;box-shadow:-6px 0 18px rgba(0,0,0,.18);order:2;display:flex;flex-direction:column}
 .me{background:var(--deep);padding:28px 16px 22px;text-align:center}
 .me .av{width:104px;height:104px;border-radius:50%;background:#53b6e3;margin:0 auto 10px;display:grid;place-items:center;font-size:2.6rem;font-weight:700}
+.me .av img{width:100%;height:100%;border-radius:50%;object-fit:cover}
 aside nav{padding:22px 0}
 aside nav a{display:flex;align-items:center;justify-content:center;gap:12px;color:#fff;text-decoration:none;padding:15px 0;font-size:1.15rem;font-weight:600}
 aside nav a:hover,aside nav a.on{background:rgba(255,255,255,.14)}
@@ -35,6 +36,9 @@ h2.title b{color:var(--blue);font-weight:500}
 label{display:block;text-align:center;margin-bottom:6px}
 .field{width:100%;padding:12px 14px;border:1px solid var(--line);background:#fff;text-align:center}
 .field[readonly]{background:#eee;color:#888}
+.profile-form{text-align:center}
+.profile-preview{display:block;width:144px;height:144px;border-radius:50%;object-fit:cover;margin:0 auto 16px}
+.profile-form .muted{color:var(--muted);font-size:.9rem}
 textarea.field{min-height:110px;resize:vertical}
 .btn{border:0;background:var(--blue);color:#fff;padding:12px 22px;cursor:pointer;border-radius:3px}
 .btn:hover{filter:brightness(.93)}
