@@ -65,59 +65,27 @@ const can = (feature, action) => me.role === 'admin' || me.permissions?.[feature
 const hasFeature = feature => Object.keys(permissionActions).some(action => can(feature, action));
 function permissionEditorMarkup(permissionSettings) {
   const rolePermissions = Object.fromEntries((permissionSettings?.roles || []).map(role => [role.role, role.permissions]));
-  const users = (permissionSettings?.users || []).filter(user => user.role !== 'admin');
   const roleTable = role => `<div class="table-wrap permission-matrix"><table><thead><tr><th>Feature</th>${Object.values(permissionActions).map(action => `<th>${action}</th>`).join('')}</tr></thead><tbody>
     ${Object.entries(permissionFeatures).map(([feature, title]) => `<tr><th>${title}</th>${Object.keys(permissionActions).map(action => `<td>${permissionCapabilities[feature].includes(action) ? `<input type="checkbox" data-role-feature="${feature}" data-role-action="${action}" ${rolePermissions[role]?.[feature]?.[action] ? 'checked' : ''} aria-label="${title}: ${permissionActions[action]}">` : '<span class="muted" aria-label="Not applicable">—</span>'}</td>`).join('')}</tr>`).join('')}
     </tbody></table></div>`;
-  const userTable = user => {
-    if (!user) return '<p class="muted">Select a user to customize permissions.</p>';
-    const overrides = user.permission_overrides || {};
-    return `<div class="table-wrap permission-matrix"><table><thead><tr><th>Feature</th>${Object.values(permissionActions).map(action => `<th>${action}</th>`).join('')}</tr></thead><tbody>
-      ${Object.entries(permissionFeatures).map(([feature, title]) => `<tr><th>${title}</th>${Object.keys(permissionActions).map(action => {
-        if (!permissionCapabilities[feature].includes(action)) return '<td><span class="muted" aria-label="Not applicable">—</span></td>';
-        const value = overrides[feature]?.[action];
-        return `<td><select class="field permission-override" data-feature="${feature}" data-action="${action}" aria-label="${title}: ${permissionActions[action]}">
-          <option value="" ${value === undefined ? 'selected' : ''}>Use role</option>
-          <option value="true" ${value === true ? 'selected' : ''}>Allow</option>
-          <option value="false" ${value === false ? 'selected' : ''}>Deny</option>
-        </select></td>`;
-      }).join('')}</tr>`).join('')}
-      </tbody></table></div>`;
-  };
   return `<div class="panel permission-settings"><h2 class="title"><b>Feature &amp; Role Permissions</b></h2>
-    <p class="muted">Admins always have full access. Role permissions set the defaults for Doctors, Assistants, and Receptionists; user settings can allow or deny an individual action.</p>
+    <p class="muted">Admins always have full access. Configure role permissions for Doctors, Assistants, and Receptionists.</p>
     <p class="muted">Some actions also require related access: creating an appointment or invoice needs patient view, and creating a session needs session edit to complete the new record.</p>
     <form id="rolePermissionForm"><label for="permissionRole">Role defaults</label><select class="field" id="permissionRole"><option value="doctor">Doctor</option><option value="assistant">Assistant</option><option value="receptionist">Receptionist</option></select>
       <div id="rolePermissionTable">${roleTable('doctor')}</div><p style="text-align:center"><button class="btn">Save role permissions</button></p></form>
-    <form id="userPermissionForm" class="user-permission-form"><label for="permissionUser">User-specific overrides</label>
-      <select class="field" id="permissionUser" ${users.length ? '' : 'disabled'}>${users.map(user => `<option value="${user.id}">${esc(user.name)} · ${esc(user.role)}</option>`).join('')}</select>
-      <div id="userPermissionTable">${userTable(users[0])}</div><p class="muted">“Use role” follows the selected user’s role defaults. Allow or deny only the actions that should differ for this user.</p>
-      <div class="row-actions"><button class="btn" ${users.length ? '' : 'disabled'}>Save user permissions</button><button type="button" class="btn dark" id="resetUserPermissions" ${users.length ? '' : 'disabled'}>Reset to role defaults</button></div>
-    </form></div>`;
+  </div>`;
 }
 function bindPermissionEditor(permissionSettings) {
   const rolePermissions = Object.fromEntries((permissionSettings?.roles || []).map(role => [role.role, role.permissions]));
-  const users = (permissionSettings?.users || []).filter(user => user.role !== 'admin');
   const roleSelect = $('#permissionRole');
   const roleTable = $('#rolePermissionTable');
-  const userSelect = $('#permissionUser');
-  const userTable = $('#userPermissionTable');
   const renderRolePermissions = () => {
     const permissions = rolePermissions[roleSelect.value] || {};
     roleTable.querySelectorAll('[data-role-feature]').forEach(input => {
       input.checked = permissions[input.dataset.roleFeature]?.[input.dataset.roleAction] === true;
     });
   };
-  const renderUserPermissions = () => {
-    const user = users.find(candidate => String(candidate.id) === userSelect.value);
-    const overrides = user?.permission_overrides || {};
-    userTable.querySelectorAll('.permission-override').forEach(select => {
-      const value = overrides[select.dataset.feature]?.[select.dataset.action];
-      select.value = value === undefined ? '' : String(value);
-    });
-  };
   roleSelect.onchange = renderRolePermissions;
-  userSelect.onchange = renderUserPermissions;
   $('#rolePermissionForm').onsubmit = tryDo(async event => {
     event.preventDefault();
     const permissions = Object.fromEntries(Object.keys(permissionFeatures).map(feature => [
@@ -133,30 +101,6 @@ function bindPermissionEditor(permissionSettings) {
     rolePermissions[saved.role] = saved.permissions;
     renderRolePermissions();
     toast('Role permissions saved');
-  });
-  $('#userPermissionForm').onsubmit = tryDo(async event => {
-    event.preventDefault();
-    const user = users.find(candidate => String(candidate.id) === userSelect.value);
-    if (!user) return;
-    const overrides = {};
-    userTable.querySelectorAll('.permission-override').forEach(select => {
-      if (select.value === '') return;
-      const { feature, action } = select.dataset;
-      overrides[feature] ||= {};
-      overrides[feature][action] = select.value === 'true';
-    });
-    const saved = await api(`/users/${user.id}/permissions`, { method: 'PUT', body: { overrides } });
-    user.permission_overrides = saved.permission_overrides;
-    renderUserPermissions();
-    toast('User permissions saved');
-  });
-  $('#resetUserPermissions').onclick = tryDo(async () => {
-    const user = users.find(candidate => String(candidate.id) === userSelect.value);
-    if (!user) return;
-    const saved = await api(`/users/${user.id}/permissions`, { method: 'PUT', body: { overrides: {} } });
-    user.permission_overrides = saved.permission_overrides;
-    renderUserPermissions();
-    toast('User permissions reset');
   });
 }
 function applyNavigationPermissions() {
