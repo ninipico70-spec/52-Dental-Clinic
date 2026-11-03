@@ -592,11 +592,37 @@ const routes = {
       if ($('#uf')) $('#uf').onsubmit = tryDo(async e => { e.preventDefault(); await api('/users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('User added'); routeNow(); });
       if (!isAdmin) return;
       document.querySelectorAll('[data-a]').forEach(b => b.onclick = tryDo(async () => { const [i, v] = b.dataset.a.split(':'); await api('/users/' + i, { method: 'PATCH', body: { active: v === '1' } }); routeNow(); }));
+      const editForm = $('#userEditForm');
+      document.querySelectorAll('[data-edit-user]').forEach(button => button.onclick = () => {
+        const user = l.find(item => String(item.id) === button.dataset.editUser);
+        if (!user) return;
+        editForm.elements.id.value = user.id;
+        editForm.elements.name.value = user.name || '';
+        editForm.elements.email.value = user.email || '';
+        editForm.elements.phone.value = user.phone || '';
+        editForm.elements.role.value = user.role;
+        editForm.elements.password.value = '';
+        editForm.hidden = false;
+        editForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      editForm.onsubmit = tryDo(async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const body = Object.fromEntries(new FormData(form));
+        const id = body.id;
+        delete body.id;
+        if (!body.password) delete body.password;
+        await api(`/users/${id}`, { method: 'PATCH', body });
+        toast('User saved');
+        routeNow();
+      });
+      $('#cancelUserEdit').onclick = () => { editForm.hidden = true; editForm.reset(); };
       bindPermissionEditor(permissionSettings);
     });
     return head() + `<h2 class="title"><b>User Management</b></h2>${isAdmin ? `<form class="panel" id="uf"><h2 class="title"><b>Add user</b></h2><div class="filters"><input class="field" name="name" placeholder="Name" required><input class="field" name="email" type="email" placeholder="E-mail" required><input class="field" name="password" type="password" minlength="8" placeholder="Password (8+ characters)" required></div>
       <div class="grid2" style="margin-top:16px"><input class="field" name="phone" placeholder="Phone"><select class="field" name="role"><option value="doctor">doctor</option><option value="assistant">assistant</option><option value="receptionist">receptionist</option><option value="admin">admin</option></select></div><p style="text-align:center"><button class="btn">Add user</button></p></form>` : ''}
-      <div class="panel"><table><thead><tr><th>Name</th>${isAdmin ? '<th>E-mail</th>' : ''}<th>Role</th><th>Status</th>${isAdmin ? '<th>Action</th>' : ''}</tr></thead><tbody>${l.map(u => `<tr><td>${esc(u.name)}</td>${isAdmin ? `<td>${esc(u.email)}</td>` : ''}<td>${u.role}</td><td>${u.active ? 'Active' : 'Disabled'}</td>${isAdmin ? `<td>${u.id === me.id ? '' : `<button class="btn sm ${u.active ? 'red' : 'green'}" data-a="${u.id}:${u.active ? 0 : 1}">${u.active ? 'Disable' : 'Enable'}</button>`}</td>` : ''}</tr>`).join('')}</tbody></table></div>
+      <div class="panel"><table><thead><tr><th>Name</th>${isAdmin ? '<th>E-mail</th>' : ''}<th>Role</th><th>Status</th>${isAdmin ? '<th>Action</th>' : ''}</tr></thead><tbody>${l.map(u => `<tr><td>${esc(u.name)}</td>${isAdmin ? `<td>${esc(u.email)}</td>` : ''}<td>${u.role}</td><td>${u.active ? 'Active' : 'Disabled'}</td>${isAdmin ? `<td><button class="btn sm" type="button" data-edit-user="${u.id}">Edit</button> ${u.id === me.id ? '' : `<button class="btn sm ${u.active ? 'red' : 'green'}" data-a="${u.id}:${u.active ? 0 : 1}">${u.active ? 'Disable' : 'Enable'}</button>`}</td>` : ''}</tr>`).join('')}</tbody></table></div>
+      ${isAdmin ? `<form class="panel" id="userEditForm" hidden><h2 class="title"><b>Edit user</b></h2><input type="hidden" name="id"><div class="filters"><label>Name<input class="field" name="name" required></label><label>E-mail<input class="field" name="email" type="email" required></label><label>Phone<input class="field" name="phone"></label><label>Role<select class="field" name="role"><option value="doctor">Doctor</option><option value="assistant">Assistant</option><option value="receptionist">Receptionist</option><option value="admin">Admin</option></select></label><label>New password (leave blank to keep current)<input class="field" name="password" type="password" minlength="8" autocomplete="new-password"></label></div><p style="text-align:center"><button class="btn" type="submit">Save user</button> <button class="btn dark" id="cancelUserEdit" type="button">Cancel</button></p></form>` : ''}
       ${isAdmin ? permissionEditorMarkup(permissionSettings) : ''}`;
   },
 
