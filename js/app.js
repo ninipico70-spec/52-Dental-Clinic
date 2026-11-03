@@ -5,6 +5,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => '$' + (+n || 0).toFixed(2).replace(/\.00$/, '');
 const day = d => d ? String(d).slice(0, 10) : '';
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 function renderAvatar(photo, name) {
   const avatar = $('#av');
   avatar.replaceChildren();
@@ -31,12 +32,23 @@ async function api(path, opt = {}) {
   return d;
 }
 function toast(msg, err) {
-  const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = msg; t.setAttribute('role', 'status');
+  const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = ClinicI18n.translate(msg); t.setAttribute('role', 'status');
   document.body.append(t); setTimeout(() => t.remove(), 3200);
 }
 const tryDo = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 const logo = '<img class="brand-logo" src="/img/logo.png" alt="52-Dental Clinic logo">';
 const head = (sub = '') => `<div class="brand">${sub ? '' : logo}<h1>52-Dental Clinic</h1><hr></div>`;
+function printTemplateMarkup(template, section) {
+  const mode = template[`${section}_mode`];
+  if (!mode || mode === 'none') return '';
+  const image = ['image', 'both'].includes(mode) && template[`${section}_image`]
+    ? `<img src="${esc(template[`${section}_image`])}" alt="Clinic print ${section}">`
+    : '';
+  const text = ['text', 'both'].includes(mode) && template[`${section}_text`]
+    ? `<div class="print-template-text" translate="no">${esc(template[`${section}_text`]).replace(/\r?\n/g, '<br>')}</div>`
+    : '';
+  return `<div class="print-template print-${section}">${image}${text}</div>`;
+}
 
 api('/me').then(profile => {
   Object.assign(me, profile);
@@ -77,7 +89,7 @@ const routes = {
         <button class="btn sm red" data-del="${p.id}">delete file</button></div></td><td>${esc(day(p.created_at))}</td><td>${esc(p.phone)}</td><td>${esc(p.name)}</td><td>${p.id}</td></tr>`).join('')
         : `<tr><td colspan="5" class="empty">No patient files match. Try a different name or clear the date.</td></tr>`;
       document.querySelectorAll('[data-del]').forEach(b => b.onclick = tryDo(async () => {
-        if (!confirm('Delete this patient file and all its sessions and payments?')) return;
+        if (!confirm(ClinicI18n.translate('Delete this patient file and all its sessions and payments?'))) return;
         await api('/patients/' + b.dataset.del, { method: 'DELETE' }); toast('File deleted'); render();
       }));
     });
@@ -93,8 +105,8 @@ const routes = {
     setTimeout(() => {
       if (edit) $('#ef').onsubmit = tryDo(async e => { e.preventDefault(); await api('/patients/' + id, { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); toast('File saved'); location.hash = '#/patient/' + id; });
       $('#as') && ($('#as').onclick = tryDo(async () => { const s = await api(`/patients/${id}/sessions`, { method: 'POST', body: {} }); location.hash = '#/session/' + s.id; }));
-      $('#df') && ($('#df').onclick = tryDo(async () => { if (confirm('Delete this patient file?')) { await api('/patients/' + id, { method: 'DELETE' }); location.hash = '#/patients'; } }));
-      document.querySelectorAll('[data-ds]').forEach(b => b.onclick = tryDo(async () => { if (confirm('Delete this session?')) { await api('/sessions/' + b.dataset.ds, { method: 'DELETE' }); routeNow(); } }));
+      $('#df') && ($('#df').onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this patient file?'))) { await api('/patients/' + id, { method: 'DELETE' }); location.hash = '#/patients'; } }));
+      document.querySelectorAll('[data-ds]').forEach(b => b.onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this session?'))) { await api('/sessions/' + b.dataset.ds, { method: 'DELETE' }); routeNow(); } }));
     });
     const ro = edit ? '' : 'readonly';
     return `<div class="panel"><div style="text-align:center"><div class="av" style="width:150px;height:150px;border-radius:50%;background:#53b6e3;color:#fff;margin:0 auto;display:grid;place-items:center;font-size:4rem">${esc(p.name[0])}</div>
@@ -114,22 +126,40 @@ const routes = {
   },
 
   async statement(id) {
-    const s = await api(`/patients/${id}/statement`);
+    const [s, template] = await Promise.all([api(`/patients/${id}/statement`), api('/print-template')]);
     setTimeout(() => {
       $('#pdf').onclick = () => print();
       $('#mail').onclick = () => location.href = `mailto:?subject=${encodeURIComponent('Account statement – ' + s.patient.name)}&body=${encodeURIComponent(`Sessions: ${s.sessions}\nCharged: ${money(s.charged)}\nPaid: ${money(s.paid)}\nBalance due: ${money(s.debt)}`)}`;
       $('#pay').onsubmit = tryDo(async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await api('/payments', { method: 'POST', body: { ...f, patient_id: id } }); toast('Payment saved'); routeNow(); });
     });
-    return head() + `<div class="panel"><h2 class="title">${esc(s.patient.name)} |<b>Account statement</b> |</h2>
+    return printTemplateMarkup(template, 'header') + head() + `<div class="panel"><h2 class="title">${esc(s.patient.name)} |<b>Account statement</b> |</h2>
       <div class="cards3"><div class="stat r"><h4>Debt amount</h4><p>${money(s.debt)}</p></div><div class="stat b"><h4>number of sessions</h4><p>${s.sessions}</p></div><div class="stat g"><h4>total payment</h4><p>${money(s.paid)}</p></div></div>
+      <h3>Invoices</h3>${s.invoices.length ? `<table><thead><tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Total</th><th>Balance</th><th>Status</th></tr></thead><tbody>${s.invoices.map(invoice => `<tr><td><a href="#/invoice/${invoice.id}">${esc(invoice.invoice_number)}</a></td><td>${day(invoice.issue_date)}</td><td>${day(invoice.due_date)}</td><td>${money(invoice.total)}</td><td>${money(invoice.balance)}</td><td>${esc(invoice.payment_status)}</td></tr>`).join('')}</tbody></table>` : '<p class="empty">No invoices found.</p>'}
       ${s.payments.length ? `<table><thead><tr><th>Date</th><th>Type</th><th>Batch</th><th>Amount</th></tr></thead><tbody>${s.payments.map(p => `<tr><td>${day(p.paid_at)}</td><td>${esc(p.type)}</td><td>${esc(p.batch_number || '')}</td><td>${money(p.amount)}</td></tr>`).join('')}</tbody></table>` : '<p class="empty">There are no payments</p>'}
       <form id="pay" class="noprint grid2" style="margin-top:20px;grid-template-columns:2fr 1fr 1fr auto"><input class="field" name="amount" type="number" step="0.01" min="0.01" placeholder="Payment amount" required aria-label="Payment amount"><select class="field" name="type" aria-label="Type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="batch_number" placeholder="batch number" aria-label="Batch number"><button class="btn green">Record payment</button></form>
-      <div class="actions3 noprint"><button class="btn red" id="pdf">PDF Download</button><button class="btn" id="mail">Send to an email</button><button class="btn green" onclick="print()">Detection printing</button></div></div>`;
+      <div class="actions3 noprint"><button class="btn red" id="pdf">PDF Download</button><button class="btn" id="mail">Send to an email</button><button class="btn green" onclick="print()">Detection printing</button></div></div>` + printTemplateMarkup(template, 'footer');
   },
 
   async session(id) {
-    const s = await api('/sessions/' + id);
+    const [s, catalog, template] = await Promise.all([api('/sessions/' + id), api('/services'), api('/print-template')]);
     const state = {}; s.teeth.forEach(t => state[t.tooth] = t);
+    const selectedServiceIds = new Set((s.services || []).map(service => service.id).filter(Boolean).map(Number));
+    const servicesById = new Map(catalog.map(service => [Number(service.id), service]));
+    for (const saved of s.services || []) {
+      if (saved.id && !servicesById.has(Number(saved.id)))
+        servicesById.set(Number(saved.id), { ...saved, active: false, id: Number(saved.id) });
+    }
+    const services = [...servicesById.values()].filter(service => service.active || selectedServiceIds.has(Number(service.id)));
+    const serviceCards = services.map(service => {
+      const selected = selectedServiceIds.has(Number(service.id));
+      const saved = (s.services || []).find(item => Number(item.id) === Number(service.id));
+      const price = saved ? saved.price : service.price;
+      const duration = saved ? saved.duration_minutes : service.duration_minutes;
+      return `<button type="button" class="service-card${selected ? ' selected' : ''}" data-service-id="${service.id}" data-price="${Number(price)}" data-duration="${Number(duration)}" aria-pressed="${selected}">
+        <span class="service-icon">${esc(service.icon || '🦷')}</span><span class="service-name">${esc(service.name)}</span>
+        <span class="service-meta">${esc(String(duration))} min · ${money(price)}</span></button>`;
+    }).join('');
+    const otherCost = s.other_cost == null && !(s.services || []).length ? Number(s.cost) : Number(s.other_cost || 0);
     let cur = null;
     const upper = [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28], lower = [48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
     const tp = n => `<button class="tooth" data-t="${n}" aria-label="Tooth ${n}"><svg viewBox="0 0 40 56"><path d="M8 8c6-6 18-6 24 0 4 10-2 18-4 30-1 8-5 14-8 6-1-4-2-7-4-7s-3 3-4 7c-3 8-7 2-8-6C10 26 4 18 8 8Z" fill="#f3f3f3" stroke="#666" stroke-width="2"/></svg><small>${n}</small></button>`;
@@ -144,37 +174,239 @@ const routes = {
       document.querySelectorAll('[name=det]').forEach(c => c.checked = t.details.includes(c.value));
       document.querySelectorAll('.surf [data-s]').forEach(e => e.classList.toggle('on', t.surfaces.includes(e.dataset.s))); paint();
     }
+    function updateServiceTotal() {
+      const chosen = [...selectedServiceIds].map(serviceId => servicesById.get(serviceId)).filter(Boolean);
+      const servicePrice = chosen.reduce((sum, service) => sum + Math.round(Number(
+        (s.services || []).find(item => Number(item.id) === Number(service.id))?.price ?? service.price
+      ) * 100), 0);
+      const duration = chosen.reduce((sum, service) => sum + Number(
+        (s.services || []).find(item => Number(item.id) === Number(service.id))?.duration_minutes ?? service.duration_minutes
+      ), 0);
+      const extra = Math.round(Number($('#otherCost').value || 0) * 100);
+      const total = money((servicePrice + extra) / 100);
+      $('#serviceTotal').textContent = total;
+      $('#sessionCost').value = total;
+      $('#printedOtherCost').textContent = money(extra / 100);
+      $('#serviceDuration').textContent = `${duration} min`;
+    }
+    const saveSession = async () => {
+      const teeth = Object.values(state).filter(t => t.condition !== 'Normal' || t.details.length || t.surfaces.length || t.note);
+      return api('/sessions/' + id, { method: 'PUT', body: {
+        session_date: $('#sdate').value,
+        service_ids: [...selectedServiceIds],
+        other_cost: $('#otherCost').value || 0,
+        notes: $('#snotes').value,
+        teeth
+      } });
+    };
     setTimeout(() => {
+      document.querySelectorAll('[data-service-id]').forEach(button => button.onclick = () => {
+        const serviceId = Number(button.dataset.serviceId);
+        if (selectedServiceIds.has(serviceId)) selectedServiceIds.delete(serviceId);
+        else selectedServiceIds.add(serviceId);
+        button.classList.toggle('selected', selectedServiceIds.has(serviceId));
+        button.setAttribute('aria-pressed', String(selectedServiceIds.has(serviceId)));
+        updateServiceTotal();
+      });
+      $('#otherCost').oninput = updateServiceTotal;
+      updateServiceTotal();
       document.querySelectorAll('.tooth').forEach(b => b.onclick = () => pick(+b.dataset.t));
-      $('#chart').addEventListener('change', () => { if (!cur) return; const t = state[cur]; t.condition = document.querySelector('[name=cond]:checked')?.value || 'Normal'; t.details = [...document.querySelectorAll('[name=det]:checked')].map(x => x.value); paint(); });
+      $('#chart').closest('.panel').addEventListener('change', () => { if (!cur) return; const t = state[cur]; t.condition = document.querySelector('[name=cond]:checked')?.value || 'Normal'; t.details = [...document.querySelectorAll('[name=det]:checked')].map(x => x.value); paint(); });
       $('#note').oninput = () => { if (cur) { state[cur].note = $('#note').value; paint(); } };
       document.querySelectorAll('.surf [data-s]').forEach(e => e.onclick = () => { if (!cur) return toast('Select a tooth first', true); const t = state[cur], k = e.dataset.s; t.surfaces = t.surfaces.includes(k) ? t.surfaces.filter(x => x !== k) : [...t.surfaces, k]; e.classList.toggle('on'); paint(); });
       $('#save').onclick = tryDo(async () => {
-        const teeth = Object.values(state).filter(t => t.condition !== 'Normal' || t.details.length || t.surfaces.length || t.note);
-        await api('/sessions/' + id, { method: 'PUT', body: { session_date: $('#sdate').value, cost: $('#cost').value || 0, notes: $('#snotes').value, teeth } });
+        await saveSession();
         toast('Session saved');
+      });
+      $('#printSession').onclick = tryDo(async () => {
+        await saveSession();
+        window.print();
+      });
+      $('#createInvoice').onclick = tryDo(async () => {
+        await saveSession();
+        const invoice = await api(`/sessions/${id}/invoice`, { method: 'POST', body: {
+          due_date: $('#invoiceDueDateSession').value || null
+        }});
+        location.hash = `#/invoice/${invoice.id}`;
       });
       paint();
     });
-    return `<div class="noprint"><div class="brand"><h1>52-Dental Clinic</h1><hr></div></div>
+    return printTemplateMarkup(template, 'header') + `<div class="brand"><h1>52-Dental Clinic</h1><hr></div>
       <div class="panel"><h2 class="title">${esc(s.patient_name)} | <b>Session</b></h2>
+      <section class="service-picker"><h3>Select Service</h3><p class="muted">Choose treatment</p><p class="muted">Record payments from the invoice to track balances and partial payments.</p>
+        <div class="service-grid">${serviceCards || '<p class="empty">No services available.</p>'}</div>
+        <div class="service-summary"><span><span data-i18n-label="service-duration">Selected duration</span>: <b id="serviceDuration">0 min</b></span><span><span data-i18n-label="service-total">Session total</span>: <b id="serviceTotal">${money(s.cost)}</b></span></div>
+        <label for="otherCost">Additional cost</label><input class="field screen-only" id="otherCost" type="number" step="0.01" min="0" value="${otherCost}" aria-label="Additional cost"><p class="print-only" id="printedOtherCost">${money(otherCost)}</p>
+      </section>
       <div class="arch">${upper.map(tp).join('')}</div>
       <div class="chart-box" id="chart"><div><h3>Note</h3><textarea class="field" id="note" placeholder="Note for the selected tooth" style="text-align:left;min-height:240px"></textarea></div>
         <div><h3 id="cur">Select a tooth</h3><h3>Condition tooth</h3>${C.map(c => `<label class="opt" style="justify-content:flex-start"><input type="radio" name="cond" value="${c}"> ${c}</label>`).join('')}
-        <h3 style="margin-top:20px">Details</h3><div class="opts2">${D.map(d => `<label class="opt" style="justify-content:flex-start"><input type="checkbox" name="det" value="${d}"> ${d}</label>`).join('')}</div></div>
-        <svg class="surf" viewBox="0 0 200 200" role="group" aria-label="Tooth surfaces"><path data-s="top" d="M100 100 L24 24 A108 108 0 0 1 176 24Z"/><path data-s="right" d="M100 100 L176 24 A108 108 0 0 1 176 176Z"/><path data-s="bottom" d="M100 100 L176 176 A108 108 0 0 1 24 176Z"/><path data-s="left" d="M100 100 L24 176 A108 108 0 0 1 24 24Z"/><circle data-s="center" cx="100" cy="100" r="36"/></svg></div>
+        </div><svg class="surf" viewBox="0 0 200 200" role="group" aria-label="Tooth surfaces"><path data-s="top" d="M100 100 L24 24 A108 108 0 0 1 176 24Z"/><path data-s="right" d="M100 100 L176 24 A108 108 0 0 1 176 176Z"/><path data-s="bottom" d="M100 100 L176 176 A108 108 0 0 1 24 176Z"/><path data-s="left" d="M100 100 L24 176 A108 108 0 0 1 24 24Z"/><circle data-s="center" cx="100" cy="100" r="36"/></svg></div>
+      <section class="tooth-details"><h3>Details</h3><div class="opts2">${D.map(d => `<label class="opt" style="justify-content:flex-start"><input type="checkbox" name="det" value="${d}"> ${d}</label>`).join('')}</div></section>
       <div class="arch" style="margin-top:24px">${lower.map(tp).join('')}</div>
-      <div class="grid2"><div><label>Session date</label><input class="field" id="sdate" type="date" value="${day(s.session_date)}"></div><div><label>Cost</label><input class="field" id="cost" type="number" step="0.01" min="0" value="${s.cost}"></div></div>
+      <div class="grid2"><div><label>Session date</label><input class="field" id="sdate" type="date" value="${day(s.session_date)}"></div><div><label>Session total</label><input class="field" id="sessionCost" value="${money(s.cost)}" readonly></div></div>
       <label>Session notes</label><textarea class="field" id="snotes">${esc(s.notes || '')}</textarea>
-      <p style="text-align:center"><button class="btn" id="save">Save session</button> <a class="btn dark" href="#/patient/${s.patient_id}">Back to file</a></p></div>`;
+      <label class="screen-only">Invoice due date (optional)<input class="field" id="invoiceDueDateSession" type="date"></label>
+      <p class="session-actions noprint" style="text-align:center"><button class="btn" id="save">Save session</button> <button class="btn green" id="createInvoice">Create invoice</button> <button class="btn" id="printSession">Print session</button> <a class="btn dark" href="#/patient/${s.patient_id}">Back to file</a></p></div>` + printTemplateMarkup(template, 'footer');
+  },
+
+  invoices() {
+    const render = tryDo(async () => {
+      const params = new URLSearchParams({ name: $('#invoiceSearch').value, status: $('#invoiceStatus').value });
+      const invoices = await api('/invoices?' + params);
+      $('#invoiceRows').innerHTML = invoices.length ? invoices.map(invoice =>
+        `<tr><td><a href="#/invoice/${invoice.id}">${esc(invoice.invoice_number)}</a></td><td>${esc(invoice.patient_name)}</td><td>${day(invoice.issue_date)}</td><td>${day(invoice.due_date)}</td><td>${money(invoice.total)}</td><td>${money(invoice.balance)}</td><td>${esc(invoice.payment_status)}</td></tr>`
+      ).join('') : '<tr><td colspan="7" class="empty">No invoices found.</td></tr>';
+    });
+    setTimeout(async () => {
+      const patients = await api('/patients');
+      $('#invoicePatient').innerHTML = '<option value="">Choose patient</option>' + patients.map(patient =>
+        `<option value="${patient.id}">${esc(patient.name)} · ${esc(patient.phone)}</option>`).join('');
+      $('#invoiceIssueDate').value = today();
+      const updateTotal = () => {
+        const subtotal = [...document.querySelectorAll('.invoice-line')].reduce((sum, line) =>
+          sum + Math.round(Number(line.querySelector('[name=quantity]').value || 0) * Number(line.querySelector('[name=unit_price]').value || 0) * 100), 0);
+        const discount = Math.round(Number($('#invoiceDiscount').value || 0) * 100);
+        $('#invoiceTotal').textContent = money(Math.max(subtotal - discount, 0) / 100);
+      };
+      const addLine = () => {
+        const row = document.createElement('div');
+        row.className = 'invoice-line';
+        row.innerHTML = '<input class="field" name="description" placeholder="Item or service description" maxlength="200" required><input class="field" name="quantity" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity" required><input class="field" name="unit_price" type="number" min="0" step="0.01" placeholder="Unit price" required><button class="btn sm dark invoice-remove-line" type="button" aria-label="Remove item">×</button>';
+        row.querySelectorAll('input').forEach(input => input.oninput = updateTotal);
+        row.querySelector('.invoice-remove-line').onclick = () => { if (document.querySelectorAll('.invoice-line').length > 1) row.remove(); updateTotal(); };
+        $('#invoiceLines').append(row);
+        updateTotal();
+      };
+      addLine();
+      $('#addInvoiceLine').onclick = addLine;
+      $('#invoiceDiscount').oninput = updateTotal;
+      $('#invoiceForm').onsubmit = tryDo(async event => {
+        event.preventDefault();
+        const items = [...document.querySelectorAll('.invoice-line')].map(line => ({
+          description: line.querySelector('[name=description]').value,
+          quantity: line.querySelector('[name=quantity]').value,
+          unit_price: line.querySelector('[name=unit_price]').value
+        }));
+        const invoice = await api('/invoices', { method: 'POST', body: {
+          patient_id: $('#invoicePatient').value,
+          issue_date: $('#invoiceIssueDate').value,
+          due_date: $('#invoiceDueDate').value || null,
+          discount: $('#invoiceDiscount').value || 0,
+          items
+        }});
+        toast('Invoice created');
+        location.hash = `#/invoice/${invoice.id}`;
+      });
+      $('#invoiceSearch').oninput = render;
+      $('#invoiceStatus').onchange = render;
+      render();
+    });
+    return head() + `<form class="panel" id="invoiceForm"><h2 class="title"><b>Create invoice</b></h2>
+      <div class="grid2"><select class="field" id="invoicePatient" required aria-label="Patient"></select><input class="field" id="invoiceIssueDate" type="date" required aria-label="Issue date"></div>
+      <div class="grid2"><label>Due date (optional)<input class="field" id="invoiceDueDate" type="date"></label><label>Discount ($)<input class="field" id="invoiceDiscount" type="number" min="0" step="0.01" value="0"></label></div>
+      <div id="invoiceLines"></div><button class="btn dark" type="button" id="addInvoiceLine">Add item</button>
+      <p class="invoice-total">Total: <b id="invoiceTotal">$0</b></p><p style="text-align:center"><button class="btn green">Create invoice</button></p></form>
+      <div class="panel"><h2 class="title"><b>Billing &amp; Invoices</b></h2><div class="filters"><input class="field" id="invoiceSearch" placeholder="Patient name"><select class="field" id="invoiceStatus" aria-label="Invoice status"><option value="">All statuses</option><option>unpaid</option><option>partially paid</option><option>paid</option><option>overdue</option><option>void</option></select></div>
+      <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Patient</th><th>Issued</th><th>Due</th><th>Total</th><th>Balance</th><th>Status</th></tr></thead><tbody id="invoiceRows"><tr><td colspan="7">Loading...</td></tr></tbody></table></div></div>`;
+  },
+
+  async invoice(id) {
+    const [invoice, template] = await Promise.all([api(`/invoices/${id}`), api('/print-template')]);
+    const refundable = Math.max(Number(invoice.paid) - Number(invoice.refunded), 0);
+    const canVoid = invoice.status !== 'void' && refundable < 0.005;
+    setTimeout(() => {
+      $('#invoicePayment')?.addEventListener('submit', tryDo(async event => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.target));
+        await api(`/invoices/${id}/payments`, { method: 'POST', body: data });
+        toast('Payment saved');
+        routeNow();
+      }));
+      $('#invoiceRefund')?.addEventListener('submit', tryDo(async event => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(event.target));
+        await api(`/invoices/${id}/refunds`, { method: 'POST', body: data });
+        toast('Refund recorded');
+        routeNow();
+      }));
+      $('#invoiceVoid')?.addEventListener('submit', tryDo(async event => {
+        event.preventDefault();
+        if (!confirm(ClinicI18n.translate('Void this invoice?'))) return;
+        const data = Object.fromEntries(new FormData(event.target));
+        await api(`/invoices/${id}/void`, { method: 'PATCH', body: data });
+        toast('Invoice voided');
+        routeNow();
+      }));
+      $('#printInvoice')?.addEventListener('click', () => print());
+    });
+    const paymentRows = invoice.payments.length ? invoice.payments.map(payment =>
+      `<tr><td>${day(payment.paid_at)}</td><td>${esc(payment.type)}</td><td>${esc(payment.batch_number || '')}</td><td>${money(payment.amount)}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="empty">No payments recorded.</td></tr>';
+    const refundRows = invoice.refunds.length ? invoice.refunds.map(refund =>
+      `<tr><td>${day(refund.refunded_at)}</td><td>${esc(refund.type)}</td><td>${esc(refund.reason)}</td><td>${money(refund.amount)}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="empty">No refunds recorded.</td></tr>';
+    const printItems = invoice.items.map((item, index) =>
+      `<tr><td>${index + 1}</td><td>${esc(item.description)}</td><td>${Number(item.quantity)}</td><td>${money(item.unit_price)}</td><td>—</td><td>${money(item.line_total)}</td></tr>`).join('');
+    const totalQuantity = invoice.items.reduce((sum, item) => sum + Number(item.quantity), 0);
+    return printTemplateMarkup(template, 'header') + `<div class="invoice-page">${head()}<div class="panel invoice-document">
+      <div class="invoice-heading"><h2>Invoice ${esc(invoice.invoice_number)}</h2><span class="invoice-status">${esc(invoice.payment_status)}</span></div>
+      <p><b>${esc(invoice.patient_name)}</b> · <a href="#/patient/${invoice.patient_id}">Patient file</a></p>
+      <p>Issue date: ${day(invoice.issue_date)}${invoice.due_date ? ` · Due date: ${day(invoice.due_date)}` : ''}</p>
+      <div class="table-wrap"><table><thead><tr><th>Description</th><th>Quantity</th><th>Unit price</th><th>Total</th></tr></thead><tbody>
+      ${invoice.items.map(item => `<tr><td>${esc(item.description)}</td><td>${Number(item.quantity)}</td><td>${money(item.unit_price)}</td><td>${money(item.line_total)}</td></tr>`).join('')}
+      </tbody><tfoot><tr><th colspan="3">Subtotal</th><td>${money(invoice.subtotal)}</td></tr><tr><th colspan="3">Discount</th><td>−${money(invoice.discount)}</td></tr><tr><th colspan="3">Invoice total</th><td><b>${money(invoice.total)}</b></td></tr><tr><th colspan="3">Paid</th><td>${money(invoice.paid)}</td></tr><tr><th colspan="3">Refunded</th><td>${money(invoice.refunded)}</td></tr><tr><th colspan="3">Balance due</th><td><b>${money(invoice.balance)}</b></td></tr></tfoot></table></div>
+      ${invoice.status === 'void' ? `<p class="invoice-warning">Voided: ${esc(invoice.void_reason || '')}</p>` : ''}
+      <h3>Payment history</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table></div>
+      <h3>Refund history</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Method</th><th>Reason</th><th>Amount</th></tr></thead><tbody>${refundRows}</tbody></table></div>
+      <div class="noprint invoice-actions">
+        ${invoice.status !== 'void' && invoice.balance > 0.001 ? `<form id="invoicePayment" class="panel"><h3>Record payment</h3><div class="filters"><input class="field" name="amount" type="number" min="0.01" max="${Number(invoice.balance).toFixed(2)}" step="0.01" placeholder="Amount (balance ${money(invoice.balance)})" required><select class="field" name="type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="batch_number" placeholder="Reference (optional)"><input class="field" name="paid_at" type="date" aria-label="Payment date"></div><button class="btn green">Record payment</button></form>` : ''}
+        ${invoice.status !== 'void' && refundable > 0.001 ? `<form id="invoiceRefund" class="panel"><h3>Record refund</h3><div class="filters"><input class="field" name="amount" type="number" min="0.01" max="${refundable.toFixed(2)}" step="0.01" placeholder="Refund (available ${money(refundable)})" required><select class="field" name="type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="reason" maxlength="500" placeholder="Refund reason" required><input class="field" name="refunded_at" type="date" aria-label="Refund date"></div><button class="btn">Record refund</button></form>` : ''}
+        ${canVoid ? `<form id="invoiceVoid" class="panel"><h3>Void invoice</h3><input class="field" name="reason" maxlength="500" placeholder="Reason for voiding" required><button class="btn red">Void invoice</button></form>` : ''}
+        <button class="btn" id="printInvoice">Print invoice</button> <a class="btn dark" href="#/invoices">Back to invoices</a>
+      </div></div><section class="invoice-print-document" aria-label="Printable invoice">
+        <h2 class="invoice-print-title"><span>INVOICE</span></h2>
+        <div class="invoice-print-parties">
+          <div class="invoice-print-box">
+            <p><b>Patient Code / លេខកូដ</b><span>${invoice.patient_id}</span></p>
+            <p><b>Name / ឈ្មោះ</b><span>${esc(invoice.patient_name)}</span></p>
+            <p><b>Sex / ភេទ</b><span>${esc(invoice.patient_gender || '—')}</span></p>
+            <p><b>Phone / ទូរស័ព្ទ</b><span>${esc(invoice.patient_phone || '—')}</span></p>
+          </div>
+          <div class="invoice-print-box">
+            <p><b>Invoice No.</b><span>${esc(invoice.invoice_number)}</span></p>
+            <p><b>Invoice Date</b><span>${day(invoice.issue_date)}</span></p>
+            ${invoice.due_date ? `<p><b>Due Date</b><span>${day(invoice.due_date)}</span></p>` : ''}
+            <p><b>Doctor</b><span>${esc(me.name || 'Clinic')}</span></p>
+            <p><b>Status</b><span>${esc(invoice.payment_status)}</span></p>
+          </div>
+        </div>
+        <table class="invoice-print-items"><thead><tr><th>No.</th><th>Dental Treatment Procedures</th><th>Qty</th><th>Price</th><th>Disc.</th><th>Amount</th></tr></thead>
+          <tbody>${printItems}</tbody>
+          <tfoot><tr><th colspan="2">Total items</th><td>${invoice.items.length}</td><th colspan="2">Total quantity</th><td>${totalQuantity}</td></tr></tfoot>
+        </table>
+        <div class="invoice-print-bottom">
+          <p class="invoice-print-note"><b>Note:</b> Please keep this invoice for your records.</p>
+          <table class="invoice-print-totals"><tbody>
+            <tr><th>Subtotal</th><td>${money(invoice.subtotal)}</td></tr>
+            <tr><th>Discount</th><td>−${money(invoice.discount)}</td></tr>
+            <tr class="invoice-print-grand-total"><th>Grand Total</th><td>${money(invoice.total)}</td></tr>
+            <tr><th>Paid Amount</th><td>${money(invoice.paid)}</td></tr>
+            <tr><th>Refunded</th><td>${money(invoice.refunded)}</td></tr>
+            <tr class="invoice-print-balance"><th>Balance</th><td>${money(invoice.balance)}</td></tr>
+          </tbody></table>
+        </div>
+        <div class="invoice-print-signatures"><div>Doctor</div><div>Receiver</div><div>Deliver</div></div>
+        ${invoice.status === 'void' ? `<p class="invoice-warning">Voided: ${esc(invoice.void_reason || '')}</p>` : ''}
+      </section></div>` + printTemplateMarkup(template, 'footer');
   },
 
   payments() {
     const render = tryDo(async () => {
       const qs = new URLSearchParams({ date: $('#fd').value, name: $('#fn').value, amount: $('#fa').value, batch: $('#fb').value });
       const l = await api('/payments?' + qs);
-      $('#tb').innerHTML = l.length ? l.map(p => `<tr><td><button class="btn sm red" data-d="${p.id}">Delete</button></td><td>${money(p.amount)}</td><td>${esc(p.type)}</td><td>${esc(p.batch_number || '')}</td><td>${day(p.paid_at)}</td><td>${esc(p.patient_name)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No payments found.</td></tr>';
-      document.querySelectorAll('[data-d]').forEach(b => b.onclick = tryDo(async () => { if (confirm('Delete this payment?')) { await api('/payments/' + b.dataset.d, { method: 'DELETE' }); render(); } }));
+      $('#tb').innerHTML = l.length ? l.map(p => `<tr><td>${p.invoice_id ? `<a class="btn sm" href="#/invoice/${p.invoice_id}">View invoice</a>` : `<button class="btn sm red" data-d="${p.id}">Delete</button>`}</td><td>${p.amount < 0 ? `-${money(-p.amount)}` : money(p.amount)}</td><td>${esc(p.type)}</td><td>${esc(p.batch_number || '')}</td><td>${day(p.paid_at)}</td><td>${esc(p.patient_name)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No payments found.</td></tr>';
+      document.querySelectorAll('[data-d]').forEach(b => b.onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this payment?'))) { await api('/payments/' + b.dataset.d, { method: 'DELETE' }); render(); } }));
     });
     setTimeout(() => { $('#go').onclick = render; render(); });
     return head() + `<div class="panel"><div class="grid2"><input class="field" id="fd" type="date" aria-label="Payment date"><input class="field" id="fn" placeholder="Patient name"></div>
@@ -186,7 +418,7 @@ const routes = {
     const render = tryDo(async () => {
       const l = await api('/expenses');
       $('#tb').innerHTML = l.length ? l.map(x => `<tr><td>${day(x.spent_at)}</td><td>${esc(x.title)}</td><td>${money(x.amount)}</td><td>${esc(x.note || '')}</td><td><button class="btn sm red" data-d="${x.id}">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No expenses yet. Add the first one above.</td></tr>';
-      document.querySelectorAll('[data-d]').forEach(b => b.onclick = tryDo(async () => { if (confirm('Delete this expense?')) { await api('/expenses/' + b.dataset.d, { method: 'DELETE' }); render(); } }));
+      document.querySelectorAll('[data-d]').forEach(b => b.onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this expense?'))) { await api('/expenses/' + b.dataset.d, { method: 'DELETE' }); render(); } }));
     });
     setTimeout(() => { render(); $('#ef').onsubmit = tryDo(async e => { e.preventDefault(); await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); e.target.reset(); toast('Expense saved'); render(); }); });
     return head() + `<form class="panel" id="ef"><h2 class="title"><b>Expenses</b></h2><div class="filters"><input class="field" name="title" placeholder="Title" required><input class="field" name="amount" type="number" step="0.01" min="0.01" placeholder="Amount" required><input class="field" name="spent_at" type="date"></div>
@@ -233,8 +465,66 @@ const routes = {
       <div class="panel"><table><thead><tr><th>Name</th><th>E-mail</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>${l.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td><td>${u.active ? 'Active' : 'Disabled'}</td><td>${u.id === me.id ? '' : `<button class="btn sm ${u.active ? 'red' : 'green'}" data-a="${u.id}:${u.active ? 0 : 1}">${u.active ? 'Disable' : 'Enable'}</button>`}</td></tr>`).join('')}</tbody></table></div>`;
   },
 
+  async services() {
+    if (me.role !== 'admin')
+      return head() + '<div class="panel"><p class="empty">Only admins can manage services.</p></div>';
+    const list = await api('/services?include_inactive=true');
+    setTimeout(() => {
+      $('#serviceForm').onsubmit = tryDo(async event => {
+        event.preventDefault();
+        await api('/services', { method: 'POST', body: Object.fromEntries(new FormData(event.target)) });
+        event.target.reset();
+        toast('Service added');
+        routeNow();
+      });
+      document.querySelectorAll('[data-service-form]').forEach(form => form.onsubmit = tryDo(async event => {
+        event.preventDefault();
+        const fields = Object.fromEntries(new FormData(event.target));
+        await api('/services/' + event.target.dataset.serviceForm, {
+          method: 'PATCH',
+          body: {
+            name: fields.name,
+            icon: fields.icon,
+            duration_minutes: Number(fields.duration_minutes),
+            price: Number(fields.price)
+          }
+        });
+        toast('Service saved');
+        routeNow();
+      }));
+      document.querySelectorAll('[data-service-active]').forEach(button => button.onclick = tryDo(async () => {
+        await api('/services/' + button.dataset.serviceActive, {
+          method: 'PATCH',
+          body: { active: button.dataset.active !== 'true' }
+        });
+        toast(button.dataset.active === 'true' ? 'Service deactivated' : 'Service activated');
+        routeNow();
+      }));
+    });
+    return head() + `<div class="panel"><h2 class="title"><b>Services</b></h2>
+      <p class="muted">Set treatment prices and appointment durations. New services start at $0.00; configure prices before adding them to a session.</p>
+      <form class="grid2" id="serviceForm">
+        <input class="field" name="name" placeholder="Service name" maxlength="100" required>
+        <input class="field" name="icon" placeholder="Icon (emoji)" maxlength="16" value="🦷" aria-label="Icon">
+        <input class="field" name="duration_minutes" type="number" min="1" max="1440" placeholder="Duration in minutes" required>
+        <input class="field" name="price" type="number" min="0" step="0.01" placeholder="Price ($)" required>
+        <p style="grid-column:1/-1;text-align:center"><button class="btn">Add service</button></p>
+      </form></div>
+      <div class="panel service-management"><table><thead><tr><th>Service</th><th>Duration (min)</th><th>Price ($)</th><th>Status</th><th>Action</th></tr></thead><tbody>
+      ${list.map(service => `<tr><td><form class="service-row" id="service-${service.id}" data-service-form="${service.id}">
+        <input class="field service-icon-field" name="icon" value="${esc(service.icon)}" maxlength="16" aria-label="Service icon">
+        <input class="field" name="name" value="${esc(service.name)}" maxlength="100" required aria-label="Service name"></form></td>
+        <td><input class="field service-duration-field" form="service-${service.id}" name="duration_minutes" type="number" min="1" max="1440" value="${service.duration_minutes}" required aria-label="Duration in minutes"></td>
+        <td><input class="field service-price-field" form="service-${service.id}" name="price" type="number" min="0" step="0.01" value="${service.price}" required aria-label="Price"></td>
+        <td>${service.active ? 'Active' : 'Inactive'}</td>
+        <td><div class="row-actions"><button class="btn sm" form="service-${service.id}">Save</button>
+          <button type="button" class="btn sm ${service.active ? 'red' : 'green'}" data-service-active="${service.id}" data-active="${service.active}">${service.active ? 'Deactivate' : 'Activate'}</button></div></td>
+        </tr>`).join('')}</tbody></table></div>`;
+  },
+
   async settings() {
-    const profile = await api('/me');
+    const [profile, template] = await Promise.all([api('/me'), api('/print-template')]);
+    const isAdmin = profile.role === 'admin';
     setTimeout(() => {
       let photo = profile.photo || null;
       let photoChanged = false;
@@ -286,9 +576,111 @@ const routes = {
         toast('Profile photo saved');
       });
       $('#sf').onsubmit = tryDo(async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await api('/me/password', { method: 'POST', body: f }); e.target.reset(); toast('Password changed'); });
+
+      if (!isAdmin) return;
+
+      const images = {
+        header: template.header_image || null,
+        footer: template.footer_image || null
+      };
+      const syncTemplateSection = section => {
+        const mode = $(`#${section}Mode`).value;
+        $(`#${section}TextGroup`).hidden = !['text', 'both'].includes(mode);
+        $(`#${section}ImageGroup`).hidden = !['image', 'both'].includes(mode);
+        $(`#${section}ImagePreview`).hidden = !images[section];
+        $(`#${section}RemoveImage`).disabled = !images[section];
+      };
+      for (const section of ['header', 'footer']) {
+        $(`#${section}Mode`).onchange = () => {
+          syncTemplateSection(section);
+          $('#savePrintTemplate').disabled = false;
+        };
+        $(`#${section}Text`).oninput = () => { $('#savePrintTemplate').disabled = false; };
+        $(`#${section}ImageFile`).onchange = tryDo(async () => {
+          const [file] = $(`#${section}ImageFile`).files;
+          if (!file) return;
+          if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type))
+            throw new Error('Choose a JPG, PNG or WebP image.');
+          if (file.size > 10 * 1024 * 1024)
+            throw new Error('Choose an image smaller than 10 MB.');
+
+          const bitmap = await createImageBitmap(file);
+          try {
+            const scale = Math.min(1, 1400 / bitmap.width, 350 / bitmap.height);
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+            canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error('Your browser could not process this image.');
+            context.fillStyle = '#fff';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+            const data = canvas.toDataURL('image/jpeg', 0.82);
+            if (data.length > 600000)
+              throw new Error('Image is too detailed. Choose a smaller or simpler image.');
+            images[section] = data;
+          } finally {
+            bitmap.close();
+          }
+
+          $(`#${section}ImagePreview`).src = images[section];
+          syncTemplateSection(section);
+          $('#savePrintTemplate').disabled = false;
+        });
+        $(`#${section}RemoveImage`).onclick = () => {
+          images[section] = null;
+          $(`#${section}ImagePreview`).removeAttribute('src');
+          $(`#${section}ImageFile`).value = '';
+          syncTemplateSection(section);
+          $('#savePrintTemplate').disabled = false;
+        };
+        syncTemplateSection(section);
+      }
+
+      $('#printTemplateForm').onsubmit = tryDo(async event => {
+        event.preventDefault();
+        const updated = await api('/print-template', {
+          method: 'PATCH',
+          body: {
+            header_mode: $('#headerMode').value,
+            header_text: $('#headerText').value,
+            header_image: images.header,
+            footer_mode: $('#footerMode').value,
+            footer_text: $('#footerText').value,
+            footer_image: images.footer
+          }
+        });
+        images.header = updated.header_image;
+        images.footer = updated.footer_image;
+        $('#savePrintTemplate').disabled = true;
+        toast('Print template saved');
+      });
     });
-    return head() + `<div class="panel" style="max-width:600px"><h2 class="title"><b>Profile</b></h2><form id="profileForm" class="profile-form"><img id="profilePreview" class="profile-preview" src="${esc(profile.photo || '')}" alt="Profile photo preview" ${profile.photo ? '' : 'hidden'}><label for="photoFile">Profile photo</label><input class="field" id="photoFile" type="file" accept="image/jpeg,image/png,image/webp"><p class="muted">JPG, PNG or WebP; images are cropped and resized before upload.</p><div class="row-actions"><button class="btn" id="savePhoto" disabled>Save photo</button><button class="btn dark" id="clearPhoto" type="button">Remove photo</button></div></form></div>
-      <form class="panel" id="sf" style="max-width:600px"><h2 class="title"><b>Change password</b></h2><label>Current password</label><input class="field" type="password" name="current" required autocomplete="current-password"><label style="margin-top:16px">New password (8+ characters)</label><input class="field" type="password" name="next" minlength="8" required autocomplete="new-password"><p style="text-align:center"><button class="btn">Change password</button></p></form>`;
+    const templateSection = (section, title) => {
+      const mode = template[`${section}_mode`];
+      const image = template[`${section}_image`];
+      return `<section class="template-section"><h3>${title}</h3>
+        <label for="${section}Mode">Layout</label><select class="field" id="${section}Mode">
+          <option value="none" ${mode === 'none' ? 'selected' : ''}>None</option>
+          <option value="text" ${mode === 'text' ? 'selected' : ''}>Text only</option>
+          <option value="image" ${mode === 'image' ? 'selected' : ''}>Image only</option>
+          <option value="both" ${mode === 'both' ? 'selected' : ''}>Text + Image</option>
+        </select>
+        <div id="${section}TextGroup" class="template-editor"><label for="${section}Text">Custom text</label><textarea class="field" id="${section}Text" maxlength="2000" placeholder="Enter text; line breaks are kept">${esc(template[`${section}_text`] || '')}</textarea></div>
+        <div id="${section}ImageGroup" class="template-editor"><label for="${section}ImageFile">Upload image</label><input class="field" id="${section}ImageFile" type="file" accept="image/jpeg,image/png,image/webp">
+          <p class="muted">JPG, PNG or WebP; images are resized to fit a print header or footer.</p>
+          <img class="template-image-preview" id="${section}ImagePreview" src="${esc(image || '')}" alt="${title} image preview" ${image ? '' : 'hidden'}>
+          <button type="button" class="btn dark" id="${section}RemoveImage" ${image ? '' : 'disabled'}>Remove image</button>
+        </div></section>`;
+    };
+    return head() + `<div class="panel" style="max-width:700px"><h2 class="title"><b>Profile</b></h2><form id="profileForm" class="profile-form"><img id="profilePreview" class="profile-preview" src="${esc(profile.photo || '')}" alt="Profile photo preview" ${profile.photo ? '' : 'hidden'}><label for="photoFile">Profile photo</label><input class="field" id="photoFile" type="file" accept="image/jpeg,image/png,image/webp"><p class="muted">JPG, PNG or WebP; images are cropped and resized before upload.</p><div class="row-actions"><button class="btn" id="savePhoto" disabled>Save photo</button><button class="btn dark" id="clearPhoto" type="button">Remove photo</button></div></form></div>
+      <form class="panel" id="sf" style="max-width:700px"><h2 class="title"><b>Change password</b></h2><label>Current password</label><input class="field" type="password" name="current" required autocomplete="current-password"><label style="margin-top:16px">New password (8+ characters)</label><input class="field" type="password" name="next" minlength="8" required autocomplete="new-password"><p style="text-align:center"><button class="btn">Change password</button></p></form>
+      <div class="panel print-template-settings" style="max-width:700px"><h2 class="title"><b>Printing template</b></h2>
+        ${isAdmin ? `<p class="muted">This clinic-wide template appears on printed patient sessions and account statements.</p>
+        <form id="printTemplateForm">${templateSection('header', 'Print header')}${templateSection('footer', 'Print footer')}
+          <p style="text-align:center"><button class="btn" id="savePrintTemplate" disabled>Save print template</button></p></form>`
+        : '<p class="muted">Clinic printing templates are managed by an administrator.</p>'}
+      </div>`;
   },
 };
 

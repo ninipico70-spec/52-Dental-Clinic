@@ -1,13 +1,15 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>52-Dental Clinic</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Noto+Sans+Khmer:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css"></head>
 <body><div class="shell">
 <aside><div class="me"><div class="av" id="av"></div><div>Happy day</div><div id="uname" style="font-weight:600"></div></div>
+<div class="language-switch"><label for="languageSelect">Language / ភាសា</label><select id="languageSelect" data-language aria-label="Language"><option value="en">English</option><option value="km">ខ្មែរ</option></select></div>
 <nav id="nav">
-<a href="#/main">🏠 Main</a><a href="#/new-patient">➕ new patient</a><a href="#/payments">💳 Payments</a>
-<a href="#/expenses">📎 Expenses</a><a href="#/patients">🔍 search</a><a href="#/users">👤 Users</a>
+<a href="#/main">🏠 Main</a><a href="#/new-patient">➕ new patient</a><a href="#/invoices">🧾 Billing &amp; Invoices</a><a href="#/payments">💳 Payments</a>
+<a href="#/expenses">📎 Expenses</a><a href="#/patients">🔍 search</a><a href="#/services">🦷 Services</a><a href="#/users">👤 Users</a>
 <a href="#/settings">🔧 Settings</a><a href="#" id="out">⎋ sign out</a></nav></aside>
 <main id="app"></main></div>
+<script src="/js/i18n.js"></script>
 <script src="/js/config.js"></script>
 <script src="/js/app.js"></script></body></html>

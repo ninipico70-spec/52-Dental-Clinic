@@ -1,14 +1,16 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in – 52-Dental Clinic</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600&family=Noto+Sans+Khmer:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css"></head>
 <body class="login-bg"><form class="login-card" id="f" autocomplete="on">
 <img class="login-logo" src="/img/logo.png" alt="52-Dental Clinic logo">
+<div class="language-switch"><label for="languageSelect">Language / ភាសា</label><select id="languageSelect" data-language aria-label="Language"><option value="en">English</option><option value="km">ខ្មែរ</option></select></div>
 <input id="email" type="email" placeholder="E-mail" required autocomplete="username" aria-label="E-mail">
 <input id="pw" type="password" placeholder="password" required autocomplete="current-password" aria-label="Password">
 <button class="btn" type="submit">sign in</button>
 <div class="alert" id="err" role="alert" hidden></div>
 </form>
+<script src="/js/i18n.js"></script>
 <script src="/js/config.js"></script>
 <script>
 if(localStorage.token) location.href='/';
@@ -16,5 +18,5 @@ f.onsubmit=async e=>{e.preventDefault();err.hidden=true;
  try{const r=await fetch(API_BASE+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value,password:pw.value})});
   const d=await r.json(); if(!r.ok) throw new Error(d.error);
   localStorage.token=d.token; localStorage.user=JSON.stringify(d.user); location.href='/';
- }catch(x){err.textContent=x.message||'Could not reach the server.';err.hidden=false}};
+ }catch(x){err.textContent=ClinicI18n.translate(x.message||'Could not reach the server.');err.hidden=false}};
 </script></body></html>
