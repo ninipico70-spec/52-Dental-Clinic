@@ -16,15 +16,16 @@ button,input,select,textarea{font:inherit}
 /* shell */
 .shell{display:flex;min-height:100vh}
 main{flex:1;padding:24px 40px 60px;min-width:0}
-aside{width:300px;background:var(--side);color:#fff;position:sticky;top:0;height:100vh;box-shadow:-6px 0 18px rgba(0,0,0,.18);order:2;display:flex;flex-direction:column}
-.me{background:var(--deep);padding:28px 16px 22px;text-align:center}
-.me .av{width:104px;height:104px;border-radius:50%;background:#53b6e3;margin:0 auto 10px;display:grid;place-items:center;font-size:2.6rem;font-weight:700}
+aside{width:300px;background:var(--side);color:#fff;position:sticky;top:0;height:100vh;height:100dvh;min-height:0;overflow-y:auto;box-shadow:-6px 0 18px rgba(0,0,0,.18);order:2;display:flex;flex-direction:column}
+.me{background:var(--deep);padding:14px 12px;text-align:center}
+.me .av{width:72px;height:72px;border-radius:50%;background:#53b6e3;margin:0 auto 8px;display:grid;place-items:center;font-size:2.6rem;font-weight:700}
 .me .av img{width:100%;height:100%;border-radius:50%;object-fit:cover}
-.language-switch{padding:12px 20px;text-align:center}
+.language-switch{padding:6px 16px;text-align:center}
 .language-switch label{color:inherit;font-size:.95rem;margin-bottom:6px}
-.language-switch select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink)}
-aside nav{padding:22px 0}
-aside nav a{display:flex;align-items:center;justify-content:center;gap:12px;color:#fff;text-decoration:none;padding:15px 0;font-size:1.15rem;font-weight:600}
+.language-switch select{width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink)}
+aside nav{padding:8px 0;flex:0 0 auto}
+aside nav a{display:flex;align-items:center;justify-content:center;gap:12px;color:#fff;text-decoration:none;padding:8px 0;font-size:1rem;font-weight:600}
+aside nav [hidden]{display:none!important}
 aside nav a:hover,aside nav a.on{background:rgba(255,255,255,.14)}
 .brand{text-align:center;margin:8px 0 24px}
 .brand h1{font-size:2.3rem;font-weight:600;margin:6px 0 16px}
@@ -129,6 +130,15 @@ tr.alt td{background:#c0645f;color:#fff}
 .invoice-actions .panel{max-width:none;padding:16px;margin:16px 0}
 .invoice-warning{color:var(--red);font-weight:600}
 .table-wrap{overflow-x:auto}
+.permission-settings{max-width:1100px}
+.permission-settings form+form{border-top:1px solid var(--line);margin-top:24px;padding-top:24px}
+.permission-matrix{margin:16px 0}
+.permission-matrix table{min-width:620px}
+.permission-matrix th,.permission-matrix td{padding:9px 8px}
+.permission-matrix tbody th{text-align:left;white-space:nowrap}
+.permission-matrix input[type=checkbox]{width:20px;height:20px;accent-color:var(--blue);cursor:pointer}
+.permission-matrix .field{min-width:110px;padding:7px 4px}
+.permission-settings .row-actions{justify-content:center}
 .invoice-print-document{display:none}
 @media(max-width:900px){.shell{flex-direction:column}aside{order:0;width:100%;height:auto;position:static}aside nav{display:flex;flex-wrap:wrap}aside nav a{flex:1 1 33%;padding:10px 0;font-size:1rem}main{padding:16px}.dash{grid-template-columns:1fr}.tiles{border:0;margin:20px 0 0;padding:0;grid-template-columns:1fr 1fr}.grid2,.filters,.cards3,.chart-box{grid-template-columns:1fr}.actions3{grid-template-columns:1fr}}
 @media(max-width:600px){.service-grid{gap:8px}.service-card{min-height:90px;padding:8px}.service-row{flex-wrap:wrap}.service-row .field{flex:1 1 35%}.service-row .service-icon-field{flex:0 0 64px}.invoice-line{grid-template-columns:1fr 1fr}.invoice-line [name=description]{grid-column:1/-1}}

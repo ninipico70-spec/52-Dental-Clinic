@@ -6,9 +6,9 @@
 <aside><div class="me"><div class="av" id="av"></div><div>Happy day</div><div id="uname" style="font-weight:600"></div></div>
 <div class="language-switch"><label for="languageSelect">Language / ភាសា</label><select id="languageSelect" data-language aria-label="Language"><option value="en">English</option><option value="km">ខ្មែរ</option></select></div>
 <nav id="nav">
-<a href="#/main">🏠 Main</a><a href="#/new-patient">➕ new patient</a><a href="#/invoices">🧾 Billing &amp; Invoices</a><a href="#/payments">💳 Payments</a>
-<a href="#/expenses">📎 Expenses</a><a href="#/patients">🔍 search</a><a href="#/services">🦷 Services</a><a href="#/users">👤 Users</a>
-<a href="#/settings">🔧 Settings</a><a href="#" id="out">⎋ sign out</a></nav></aside>
+<a href="#/main">🏠 Main</a><a href="#/new-patient" data-feature="patients" data-action="create">➕ new patient</a><a href="#/invoices" data-feature="invoices" data-alternate-action="create" data-requires-feature="patients">🧾 Billing &amp; Invoices</a><a href="#/payments" data-feature="payments">💳 Payments</a>
+<a href="#/expenses" data-feature="expenses" data-alternate-action="create">📎 Expenses</a><a href="#/patients" data-feature="patients">🔍 search</a><a href="#/services" data-feature="services" data-alternate-action="create">🦷 Services</a><a href="#/users" data-feature="users">👤 User Management</a>
+<a href="#/settings" data-feature="settings">🔧 Settings</a><a href="#" id="out">⎋ sign out</a></nav></aside>
 <main id="app"></main></div>
 <script src="/js/i18n.js"></script>
 <script src="/js/config.js"></script>

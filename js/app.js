@@ -36,6 +36,138 @@ function toast(msg, err) {
   document.body.append(t); setTimeout(() => t.remove(), 3200);
 }
 const tryDo = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+const permissionFeatures = {
+  patients: 'Patient records',
+  appointments: 'Appointments',
+  sessions: 'Dental sessions',
+  invoices: 'Invoices',
+  payments: 'Payments',
+  expenses: 'Expenses',
+  services: 'Services',
+  reports: 'Reports and statements',
+  users: 'User Management',
+  settings: 'Settings'
+};
+const permissionActions = { view: 'View', create: 'Create', edit: 'Edit', delete: 'Delete' };
+const permissionCapabilities = {
+  patients: ['view', 'create', 'edit', 'delete'],
+  appointments: ['view', 'create', 'edit', 'delete'],
+  sessions: ['view', 'create', 'edit', 'delete'],
+  invoices: ['view', 'create', 'edit'],
+  payments: ['view', 'create', 'edit', 'delete'],
+  expenses: ['view', 'create', 'delete'],
+  services: ['view', 'create', 'edit'],
+  reports: ['view'],
+  users: ['view'],
+  settings: ['view', 'edit']
+};
+const can = (feature, action) => me.role === 'admin' || me.permissions?.[feature]?.[action] === true;
+const hasFeature = feature => Object.keys(permissionActions).some(action => can(feature, action));
+function permissionEditorMarkup(permissionSettings) {
+  const rolePermissions = Object.fromEntries((permissionSettings?.roles || []).map(role => [role.role, role.permissions]));
+  const users = (permissionSettings?.users || []).filter(user => user.role !== 'admin');
+  const roleTable = role => `<div class="table-wrap permission-matrix"><table><thead><tr><th>Feature</th>${Object.values(permissionActions).map(action => `<th>${action}</th>`).join('')}</tr></thead><tbody>
+    ${Object.entries(permissionFeatures).map(([feature, title]) => `<tr><th>${title}</th>${Object.keys(permissionActions).map(action => `<td>${permissionCapabilities[feature].includes(action) ? `<input type="checkbox" data-role-feature="${feature}" data-role-action="${action}" ${rolePermissions[role]?.[feature]?.[action] ? 'checked' : ''} aria-label="${title}: ${permissionActions[action]}">` : '<span class="muted" aria-label="Not applicable">—</span>'}</td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>`;
+  const userTable = user => {
+    if (!user) return '<p class="muted">Select a user to customize permissions.</p>';
+    const overrides = user.permission_overrides || {};
+    return `<div class="table-wrap permission-matrix"><table><thead><tr><th>Feature</th>${Object.values(permissionActions).map(action => `<th>${action}</th>`).join('')}</tr></thead><tbody>
+      ${Object.entries(permissionFeatures).map(([feature, title]) => `<tr><th>${title}</th>${Object.keys(permissionActions).map(action => {
+        if (!permissionCapabilities[feature].includes(action)) return '<td><span class="muted" aria-label="Not applicable">—</span></td>';
+        const value = overrides[feature]?.[action];
+        return `<td><select class="field permission-override" data-feature="${feature}" data-action="${action}" aria-label="${title}: ${permissionActions[action]}">
+          <option value="" ${value === undefined ? 'selected' : ''}>Use role</option>
+          <option value="true" ${value === true ? 'selected' : ''}>Allow</option>
+          <option value="false" ${value === false ? 'selected' : ''}>Deny</option>
+        </select></td>`;
+      }).join('')}</tr>`).join('')}
+      </tbody></table></div>`;
+  };
+  return `<div class="panel permission-settings"><h2 class="title"><b>Feature &amp; Role Permissions</b></h2>
+    <p class="muted">Admins always have full access. Role permissions set the defaults for Doctors, Assistants, and Receptionists; user settings can allow or deny an individual action.</p>
+    <p class="muted">Some actions also require related access: creating an appointment or invoice needs patient view, and creating a session needs session edit to complete the new record.</p>
+    <form id="rolePermissionForm"><label for="permissionRole">Role defaults</label><select class="field" id="permissionRole"><option value="doctor">Doctor</option><option value="assistant">Assistant</option><option value="receptionist">Receptionist</option></select>
+      <div id="rolePermissionTable">${roleTable('doctor')}</div><p style="text-align:center"><button class="btn">Save role permissions</button></p></form>
+    <form id="userPermissionForm" class="user-permission-form"><label for="permissionUser">User-specific overrides</label>
+      <select class="field" id="permissionUser" ${users.length ? '' : 'disabled'}>${users.map(user => `<option value="${user.id}">${esc(user.name)} · ${esc(user.role)}</option>`).join('')}</select>
+      <div id="userPermissionTable">${userTable(users[0])}</div><p class="muted">“Use role” follows the selected user’s role defaults. Allow or deny only the actions that should differ for this user.</p>
+      <div class="row-actions"><button class="btn" ${users.length ? '' : 'disabled'}>Save user permissions</button><button type="button" class="btn dark" id="resetUserPermissions" ${users.length ? '' : 'disabled'}>Reset to role defaults</button></div>
+    </form></div>`;
+}
+function bindPermissionEditor(permissionSettings) {
+  const rolePermissions = Object.fromEntries((permissionSettings?.roles || []).map(role => [role.role, role.permissions]));
+  const users = (permissionSettings?.users || []).filter(user => user.role !== 'admin');
+  const roleSelect = $('#permissionRole');
+  const roleTable = $('#rolePermissionTable');
+  const userSelect = $('#permissionUser');
+  const userTable = $('#userPermissionTable');
+  const renderRolePermissions = () => {
+    const permissions = rolePermissions[roleSelect.value] || {};
+    roleTable.querySelectorAll('[data-role-feature]').forEach(input => {
+      input.checked = permissions[input.dataset.roleFeature]?.[input.dataset.roleAction] === true;
+    });
+  };
+  const renderUserPermissions = () => {
+    const user = users.find(candidate => String(candidate.id) === userSelect.value);
+    const overrides = user?.permission_overrides || {};
+    userTable.querySelectorAll('.permission-override').forEach(select => {
+      const value = overrides[select.dataset.feature]?.[select.dataset.action];
+      select.value = value === undefined ? '' : String(value);
+    });
+  };
+  roleSelect.onchange = renderRolePermissions;
+  userSelect.onchange = renderUserPermissions;
+  $('#rolePermissionForm').onsubmit = tryDo(async event => {
+    event.preventDefault();
+    const permissions = Object.fromEntries(Object.keys(permissionFeatures).map(feature => [
+      feature,
+      Object.fromEntries(Object.keys(permissionActions).map(action => [
+        action,
+        permissionCapabilities[feature].includes(action)
+          ? roleTable.querySelector(`[data-role-feature="${feature}"][data-role-action="${action}"]`).checked
+          : false
+      ]))
+    ]));
+    const saved = await api(`/permissions/roles/${roleSelect.value}`, { method: 'PUT', body: { permissions } });
+    rolePermissions[saved.role] = saved.permissions;
+    renderRolePermissions();
+    toast('Role permissions saved');
+  });
+  $('#userPermissionForm').onsubmit = tryDo(async event => {
+    event.preventDefault();
+    const user = users.find(candidate => String(candidate.id) === userSelect.value);
+    if (!user) return;
+    const overrides = {};
+    userTable.querySelectorAll('.permission-override').forEach(select => {
+      if (select.value === '') return;
+      const { feature, action } = select.dataset;
+      overrides[feature] ||= {};
+      overrides[feature][action] = select.value === 'true';
+    });
+    const saved = await api(`/users/${user.id}/permissions`, { method: 'PUT', body: { overrides } });
+    user.permission_overrides = saved.permission_overrides;
+    renderUserPermissions();
+    toast('User permissions saved');
+  });
+  $('#resetUserPermissions').onclick = tryDo(async () => {
+    const user = users.find(candidate => String(candidate.id) === userSelect.value);
+    if (!user) return;
+    const saved = await api(`/users/${user.id}/permissions`, { method: 'PUT', body: { overrides: {} } });
+    user.permission_overrides = saved.permission_overrides;
+    renderUserPermissions();
+    toast('User permissions reset');
+  });
+}
+function applyNavigationPermissions() {
+  document.querySelectorAll('#nav [data-feature]').forEach(link => {
+    const feature = link.dataset.feature;
+    const alternate = link.dataset.alternateAction;
+    const alternateAllowed = alternate && can(feature, alternate) &&
+      (!link.dataset.requiresFeature || can(link.dataset.requiresFeature, link.dataset.requiresAction || 'view'));
+    link.hidden = !can(feature, link.dataset.action || 'view') && !alternateAllowed;
+  });
+}
 const logo = '<img class="brand-logo" src="/img/logo.png" alt="52-Dental Clinic logo">';
 const head = (sub = '') => `<div class="brand">${sub ? '' : logo}<h1>52-Dental Clinic</h1><hr></div>`;
 function printTemplateMarkup(template, section) {
@@ -50,29 +182,40 @@ function printTemplateMarkup(template, section) {
   return `<div class="print-template print-${section}">${image}${text}</div>`;
 }
 
-api('/me').then(profile => {
+const profileReady = api('/me').then(profile => {
   Object.assign(me, profile);
   localStorage.user = JSON.stringify(me);
   $('#uname').textContent = me.name || '';
   renderAvatar(me.photo, me.name);
-}).catch(error => toast(`Could not load your profile: ${error.message}`, true));
+  applyNavigationPermissions();
+  return profile;
+}).catch(error => {
+  toast(`Could not load your profile: ${error.message}`, true);
+  return null;
+});
 
 const routes = {
   async main() {
     const d = await api('/dashboard');
     const rows = [['Payments today', money(d.payments_today), '$'], ['box (today)', money(d.box), '▣'], ['The patients', d.patients, '👥'],
-      ['Appointments today', d.appointments, '🔗'], ['Users', d.users, '▤'], ["Today's reviews", d.reviews, '🔒']];
-    const tiles = [['#/appointments', '📅', 'Appointments'], ['#/patients', '📁', 'files'], ['#/new-patient', '🦷', 'new patient'],
-      ['#/appointments', '📋', "Today's reviews"], ['#/reports', '📊', 'Reports'], ['#/payments', '💵', 'Payments'],
-      ['#/box', '🧰', 'box'], ['#/patients', '🔄', 'Pictures'], ['#/users', '🧑‍⚕️', 'Users']];
-    return head() + `<div class="dash"><div class="stats">${rows.map(r => `<div><span>${r[2]}</span><span>${r[0]}</span><span class="badge">${r[1]}</span></div>`).join('')}</div>
-      <div class="tiles">${tiles.map(t => `<a class="tile" href="${t[0]}"><span class="ico">${t[1]}</span>${t[2]}</a>`).join('')}</div></div>`;
+      ['Appointments today', d.appointments, '🔗'], ['User Management', d.users, '▤'], ["Today's reviews", d.reviews, '🔒']];
+    const dataKeys = ['payments_today', 'box', 'patients', 'appointments', 'users', 'reviews'];
+    const tiles = [['#/appointments', '📅', 'Appointments', 'appointments', 'view'], ['#/patients', '📁', 'files', 'patients', 'view'],
+      ['#/new-patient', '🦷', 'new patient', 'patients', 'create'], ['#/appointments', '📋', "Today's reviews", 'appointments', 'view'],
+      ['#/reports', '📊', 'Reports', 'reports', 'view'], ['#/payments', '💵', 'Payments', 'payments', 'view'],
+      ['#/box', '🧰', 'box', 'payments', 'view'], ['#/patients', '🔄', 'Pictures', 'patients', 'view'], ['#/users', '🧑‍⚕️', 'User Management', 'users', 'view']];
+    const visibleRows = rows.filter((_, index) => d[dataKeys[index]] !== null);
+    const visibleTiles = tiles.filter(tile => can(tile[3], tile[4]) ||
+      (tile[3] === 'appointments' && tile[4] === 'view' && can('appointments', 'create') && can('patients', 'view')));
+    return head() + `<div class="dash"><div class="stats">${visibleRows.map(r => `<div><span>${r[2]}</span><span>${r[0]}</span><span class="badge">${r[1]}</span></div>`).join('')}</div>
+      <div class="tiles">${visibleTiles.map(t => `<a class="tile" href="${t[0]}"><span class="ico">${t[1]}</span>${t[2]}</a>`).join('')}</div></div>`;
   },
 
   'new-patient'() {
     setTimeout(() => $('#pf').onsubmit = tryDo(async e => {
       e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
-      const p = await api('/patients', { method: 'POST', body: f }); toast('Patient file created'); location.hash = '#/patient/' + p.id;
+      const p = await api('/patients', { method: 'POST', body: f }); toast('Patient file created');
+      location.hash = can('patients', 'view') ? '#/patient/' + p.id : '#/main';
     }));
     return head(1) + `<form class="panel" id="pf"><h2 class="title">new patient | <b>New file</b></h2>
       <div class="grid2"><input class="field" name="phone" placeholder="Telephone number" required aria-label="Telephone number"><input class="field" name="name" placeholder="Patient name" required aria-label="Patient name"></div>
@@ -85,8 +228,9 @@ const routes = {
     const render = tryDo(async () => {
       const list = await api(`/patients?name=${encodeURIComponent($('#sn').value)}&from=${$('#sd').value}`);
       $('#pt').innerHTML = list.length ? list.map((p, i) => `<tr class="${i === 0 ? 'alt' : ''}"><td><div class="row-actions">
-        <a class="btn sm" href="#/patient/${p.id}">View file</a><a class="btn sm dark" href="#/patient/${p.id}/edit">Edit file</a>
-        <button class="btn sm red" data-del="${p.id}">delete file</button></div></td><td>${esc(day(p.created_at))}</td><td>${esc(p.phone)}</td><td>${esc(p.name)}</td><td>${p.id}</td></tr>`).join('')
+        ${can('patients', 'view') ? `<a class="btn sm" href="#/patient/${p.id}">View file</a>` : ''}
+        ${can('patients', 'edit') ? `<a class="btn sm dark" href="#/patient/${p.id}/edit">Edit file</a>` : ''}
+        ${can('patients', 'delete') ? `<button class="btn sm red" data-del="${p.id}">delete file</button>` : ''}</div></td><td>${esc(day(p.created_at))}</td><td>${esc(p.phone)}</td><td>${esc(p.name)}</td><td>${p.id}</td></tr>`).join('')
         : `<tr><td colspan="5" class="empty">No patient files match. Try a different name or clear the date.</td></tr>`;
       document.querySelectorAll('[data-del]').forEach(b => b.onclick = tryDo(async () => {
         if (!confirm(ClinicI18n.translate('Delete this patient file and all its sessions and payments?'))) return;
@@ -115,14 +259,17 @@ const routes = {
       <div class="grid2"><div><label>Telephone number</label><input class="field" name="phone" value="${esc(p.phone)}" ${ro}></div><div><label>entry date</label><input class="field" value="${esc(String(p.created_at).replace('T', ' ').slice(0, 19))}" readonly></div></div>
       <label>patient's gender</label>${edit ? `<select class="field" name="gender"><option ${p.gender === 'Male' ? 'selected' : ''}>Male</option><option ${p.gender === 'Female' ? 'selected' : ''}>Female</option></select>` : `<input class="field" value="${esc(p.gender || '')}" readonly>`}
       <label style="margin-top:16px">Doctor's notes</label><textarea class="field" name="note" ${ro}>${esc(p.note || '')}</textarea>
-      ${edit ? '<p style="text-align:center"><button class="btn">Save changes</button></p>' : ''}</form></div>
+      ${edit && can('patients', 'edit') ? '<p style="text-align:center"><button class="btn">Save changes</button></p>' : ''}</form></div>
       <div class="grid2" style="max-width:1100px;margin:0 auto"><div class="panel"><h3 style="text-align:center;font-weight:500">sessions</h3>
-      <table><thead><tr><th>the details</th><th>session date</th><th>cost</th></tr></thead><tbody>${p.sessions.map(s => `<tr><td><div class="row-actions"><button class="btn sm red" data-ds="${s.id}">delete session</button><a class="btn sm" href="#/session/${s.id}">View details</a></div></td><td>${esc(day(s.session_date))}</td><td>${money(s.cost)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty" style="color:#777">No sessions yet. Add the first one.</td></tr>'}</tbody></table></div>
+      ${can('sessions', 'view') ? `<table><thead><tr><th>the details</th><th>session date</th><th>cost</th></tr></thead><tbody>${p.sessions.map(s => `<tr><td><div class="row-actions">
+        ${can('sessions', 'delete') ? `<button class="btn sm red" data-ds="${s.id}">delete session</button>` : ''}
+        <a class="btn sm" href="#/session/${s.id}">View details</a></div></td><td>${esc(day(s.session_date))}</td><td>${money(s.cost)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty" style="color:#777">No sessions yet. Add the first one.</td></tr>'}</tbody></table>`
+        : '<p class="muted">You do not have permission to view sessions.</p>'}</div>
       <div class="panel"><h3 style="text-align:center;font-weight:500">the procedures</h3><table>
-      <tr><td><a href="#/patient/${id}/edit" style="color:inherit;text-decoration:none">Edit file</a></td></tr>
-      <tr><td><a href="#" id="df" style="color:var(--red);text-decoration:none">delete file</a></td></tr>
-      <tr><td><a href="#" id="as" style="color:inherit;text-decoration:none">add session</a></td></tr>
-      <tr><td><a href="#/statement/${id}" style="color:var(--green);text-decoration:none">Account statement</a></td></tr></table></div></div>`;
+      ${can('patients', 'edit') ? `<tr><td><a href="#/patient/${id}/edit" style="color:inherit;text-decoration:none">Edit file</a></td></tr>` : ''}
+      ${can('patients', 'delete') ? '<tr><td><a href="#" id="df" style="color:var(--red);text-decoration:none">delete file</a></td></tr>' : ''}
+      ${can('sessions', 'create') && can('sessions', 'edit') ? '<tr><td><a href="#" id="as" style="color:inherit;text-decoration:none">add session</a></td></tr>' : ''}
+      ${can('reports', 'view') ? `<tr><td><a href="#/statement/${id}" style="color:var(--green);text-decoration:none">Account statement</a></td></tr>` : ''}</table></div></div>`;
   },
 
   async statement(id) {
@@ -130,18 +277,19 @@ const routes = {
     setTimeout(() => {
       $('#pdf').onclick = () => print();
       $('#mail').onclick = () => location.href = `mailto:?subject=${encodeURIComponent('Account statement – ' + s.patient.name)}&body=${encodeURIComponent(`Sessions: ${s.sessions}\nCharged: ${money(s.charged)}\nPaid: ${money(s.paid)}\nBalance due: ${money(s.debt)}`)}`;
-      $('#pay').onsubmit = tryDo(async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await api('/payments', { method: 'POST', body: { ...f, patient_id: id } }); toast('Payment saved'); routeNow(); });
+      if ($('#pay')) $('#pay').onsubmit = tryDo(async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await api('/payments', { method: 'POST', body: { ...f, patient_id: id } }); toast('Payment saved'); routeNow(); });
     });
     return printTemplateMarkup(template, 'header') + head() + `<div class="panel"><h2 class="title">${esc(s.patient.name)} |<b>Account statement</b> |</h2>
       <div class="cards3"><div class="stat r"><h4>Debt amount</h4><p>${money(s.debt)}</p></div><div class="stat b"><h4>number of sessions</h4><p>${s.sessions}</p></div><div class="stat g"><h4>total payment</h4><p>${money(s.paid)}</p></div></div>
       <h3>Invoices</h3>${s.invoices.length ? `<table><thead><tr><th>Invoice</th><th>Issued</th><th>Due</th><th>Total</th><th>Balance</th><th>Status</th></tr></thead><tbody>${s.invoices.map(invoice => `<tr><td><a href="#/invoice/${invoice.id}">${esc(invoice.invoice_number)}</a></td><td>${day(invoice.issue_date)}</td><td>${day(invoice.due_date)}</td><td>${money(invoice.total)}</td><td>${money(invoice.balance)}</td><td>${esc(invoice.payment_status)}</td></tr>`).join('')}</tbody></table>` : '<p class="empty">No invoices found.</p>'}
       ${s.payments.length ? `<table><thead><tr><th>Date</th><th>Type</th><th>Batch</th><th>Amount</th></tr></thead><tbody>${s.payments.map(p => `<tr><td>${day(p.paid_at)}</td><td>${esc(p.type)}</td><td>${esc(p.batch_number || '')}</td><td>${money(p.amount)}</td></tr>`).join('')}</tbody></table>` : '<p class="empty">There are no payments</p>'}
-      <form id="pay" class="noprint grid2" style="margin-top:20px;grid-template-columns:2fr 1fr 1fr auto"><input class="field" name="amount" type="number" step="0.01" min="0.01" placeholder="Payment amount" required aria-label="Payment amount"><select class="field" name="type" aria-label="Type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="batch_number" placeholder="batch number" aria-label="Batch number"><button class="btn green">Record payment</button></form>
+      ${can('payments', 'create') ? '<form id="pay" class="noprint grid2" style="margin-top:20px;grid-template-columns:2fr 1fr 1fr auto"><input class="field" name="amount" type="number" step="0.01" min="0.01" placeholder="Payment amount" required aria-label="Payment amount"><select class="field" name="type" aria-label="Type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="batch_number" placeholder="batch number" aria-label="Batch number"><button class="btn green">Record payment</button></form>' : ''}
       <div class="actions3 noprint"><button class="btn red" id="pdf">PDF Download</button><button class="btn" id="mail">Send to an email</button><button class="btn green" onclick="print()">Detection printing</button></div></div>` + printTemplateMarkup(template, 'footer');
   },
 
   async session(id) {
     const [s, catalog, template] = await Promise.all([api('/sessions/' + id), api('/services'), api('/print-template')]);
+    const editable = can('sessions', 'edit');
     const state = {}; s.teeth.forEach(t => state[t.tooth] = t);
     const selectedServiceIds = new Set((s.services || []).map(service => service.id).filter(Boolean).map(Number));
     const servicesById = new Map(catalog.map(service => [Number(service.id), service]));
@@ -162,7 +310,7 @@ const routes = {
     const otherCost = s.other_cost == null && !(s.services || []).length ? Number(s.cost) : Number(s.other_cost || 0);
     let cur = null;
     const upper = [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28], lower = [48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
-    const tp = n => `<button class="tooth" data-t="${n}" aria-label="Tooth ${n}"><svg viewBox="0 0 40 56"><path d="M8 8c6-6 18-6 24 0 4 10-2 18-4 30-1 8-5 14-8 6-1-4-2-7-4-7s-3 3-4 7c-3 8-7 2-8-6C10 26 4 18 8 8Z" fill="#f3f3f3" stroke="#666" stroke-width="2"/></svg><small>${n}</small></button>`;
+    const tp = n => `<button class="tooth" data-t="${n}" aria-label="Tooth ${n}" ${editable ? '' : 'disabled'}><svg viewBox="0 0 40 56"><path d="M8 8c6-6 18-6 24 0 4 10-2 18-4 30-1 8-5 14-8 6-1-4-2-7-4-7s-3 3-4 7c-3 8-7 2-8-6C10 26 4 18 8 8Z" fill="#f3f3f3" stroke="#666" stroke-width="2"/></svg><small>${n}</small></button>`;
     const D = ['Cares','Coron','Implant','RR','mobility','X-RAY','Impacted','XOP','RCT','C&C'], C = ['Normal','Bad','Extracted','Traded'];
     function paint() {
       document.querySelectorAll('.tooth').forEach(b => { const t = state[b.dataset.t]; b.dataset.c = t?.condition || ''; b.classList.toggle('has', !!t && (t.details.length || t.surfaces.length || t.note)); b.classList.toggle('sel', +b.dataset.t === cur); });
@@ -200,35 +348,42 @@ const routes = {
       } });
     };
     setTimeout(() => {
-      document.querySelectorAll('[data-service-id]').forEach(button => button.onclick = () => {
+      document.querySelectorAll('[data-service-id]').forEach(button => {
+        button.disabled = !editable;
+        if (!editable) return;
+        button.onclick = () => {
         const serviceId = Number(button.dataset.serviceId);
         if (selectedServiceIds.has(serviceId)) selectedServiceIds.delete(serviceId);
         else selectedServiceIds.add(serviceId);
         button.classList.toggle('selected', selectedServiceIds.has(serviceId));
         button.setAttribute('aria-pressed', String(selectedServiceIds.has(serviceId)));
         updateServiceTotal();
+        };
       });
-      $('#otherCost').oninput = updateServiceTotal;
+      if (editable) $('#otherCost').oninput = updateServiceTotal;
       updateServiceTotal();
-      document.querySelectorAll('.tooth').forEach(b => b.onclick = () => pick(+b.dataset.t));
-      $('#chart').closest('.panel').addEventListener('change', () => { if (!cur) return; const t = state[cur]; t.condition = document.querySelector('[name=cond]:checked')?.value || 'Normal'; t.details = [...document.querySelectorAll('[name=det]:checked')].map(x => x.value); paint(); });
-      $('#note').oninput = () => { if (cur) { state[cur].note = $('#note').value; paint(); } };
-      document.querySelectorAll('.surf [data-s]').forEach(e => e.onclick = () => { if (!cur) return toast('Select a tooth first', true); const t = state[cur], k = e.dataset.s; t.surfaces = t.surfaces.includes(k) ? t.surfaces.filter(x => x !== k) : [...t.surfaces, k]; e.classList.toggle('on'); paint(); });
-      $('#save').onclick = tryDo(async () => {
-        await saveSession();
-        toast('Session saved');
-      });
+      if (editable) {
+        document.querySelectorAll('.tooth').forEach(b => b.onclick = () => pick(+b.dataset.t));
+        $('#chart').closest('.panel').addEventListener('change', () => { if (!cur) return; const t = state[cur]; t.condition = document.querySelector('[name=cond]:checked')?.value || 'Normal'; t.details = [...document.querySelectorAll('[name=det]:checked')].map(x => x.value); paint(); });
+        $('#note').oninput = () => { if (cur) { state[cur].note = $('#note').value; paint(); } };
+        document.querySelectorAll('.surf [data-s]').forEach(e => e.onclick = () => { if (!cur) return toast('Select a tooth first', true); const t = state[cur], k = e.dataset.s; t.surfaces = t.surfaces.includes(k) ? t.surfaces.filter(x => x !== k) : [...t.surfaces, k]; e.classList.toggle('on'); paint(); });
+        $('#save')?.addEventListener('click', tryDo(async () => {
+          await saveSession();
+          toast('Session saved');
+        }));
+      }
       $('#printSession').onclick = tryDo(async () => {
-        await saveSession();
+        if (editable) await saveSession();
         window.print();
       });
-      $('#createInvoice').onclick = tryDo(async () => {
-        await saveSession();
+      if (can('invoices', 'create')) $('#createInvoice')?.addEventListener('click', tryDo(async () => {
+        if (editable) await saveSession();
         const invoice = await api(`/sessions/${id}/invoice`, { method: 'POST', body: {
           due_date: $('#invoiceDueDateSession').value || null
         }});
-        location.hash = `#/invoice/${invoice.id}`;
-      });
+        if (can('invoices', 'view')) location.hash = `#/invoice/${invoice.id}`;
+        else toast('Invoice created');
+      }));
       paint();
     });
     return printTemplateMarkup(template, 'header') + `<div class="brand"><h1>52-Dental Clinic</h1><hr></div>
@@ -236,22 +391,25 @@ const routes = {
       <section class="service-picker"><h3>Select Service</h3><p class="muted">Choose treatment</p><p class="muted">Record payments from the invoice to track balances and partial payments.</p>
         <div class="service-grid">${serviceCards || '<p class="empty">No services available.</p>'}</div>
         <div class="service-summary"><span><span data-i18n-label="service-duration">Selected duration</span>: <b id="serviceDuration">0 min</b></span><span><span data-i18n-label="service-total">Session total</span>: <b id="serviceTotal">${money(s.cost)}</b></span></div>
-        <label for="otherCost">Additional cost</label><input class="field screen-only" id="otherCost" type="number" step="0.01" min="0" value="${otherCost}" aria-label="Additional cost"><p class="print-only" id="printedOtherCost">${money(otherCost)}</p>
+        <label for="otherCost">Additional cost</label><input class="field screen-only" id="otherCost" type="number" step="0.01" min="0" value="${otherCost}" aria-label="Additional cost" ${editable ? '' : 'disabled'}><p class="print-only" id="printedOtherCost">${money(otherCost)}</p>
       </section>
       <div class="arch">${upper.map(tp).join('')}</div>
-      <div class="chart-box" id="chart"><div><h3>Note</h3><textarea class="field" id="note" placeholder="Note for the selected tooth" style="text-align:left;min-height:240px"></textarea></div>
-        <div><h3 id="cur">Select a tooth</h3><h3>Condition tooth</h3>${C.map(c => `<label class="opt" style="justify-content:flex-start"><input type="radio" name="cond" value="${c}"> ${c}</label>`).join('')}
+      <div class="chart-box" id="chart"><div><h3>Note</h3><textarea class="field" id="note" placeholder="Note for the selected tooth" style="text-align:left;min-height:240px" ${editable ? '' : 'readonly'}></textarea></div>
+        <div><h3 id="cur">Select a tooth</h3><h3>Condition tooth</h3>${C.map(c => `<label class="opt" style="justify-content:flex-start"><input type="radio" name="cond" value="${c}" ${editable ? '' : 'disabled'}> ${c}</label>`).join('')}
         </div><svg class="surf" viewBox="0 0 200 200" role="group" aria-label="Tooth surfaces"><path data-s="top" d="M100 100 L24 24 A108 108 0 0 1 176 24Z"/><path data-s="right" d="M100 100 L176 24 A108 108 0 0 1 176 176Z"/><path data-s="bottom" d="M100 100 L176 176 A108 108 0 0 1 24 176Z"/><path data-s="left" d="M100 100 L24 176 A108 108 0 0 1 24 24Z"/><circle data-s="center" cx="100" cy="100" r="36"/></svg></div>
-      <section class="tooth-details"><h3>Details</h3><div class="opts2">${D.map(d => `<label class="opt" style="justify-content:flex-start"><input type="checkbox" name="det" value="${d}"> ${d}</label>`).join('')}</div></section>
+      <section class="tooth-details"><h3>Details</h3><div class="opts2">${D.map(d => `<label class="opt" style="justify-content:flex-start"><input type="checkbox" name="det" value="${d}" ${editable ? '' : 'disabled'}> ${d}</label>`).join('')}</div></section>
       <div class="arch" style="margin-top:24px">${lower.map(tp).join('')}</div>
-      <div class="grid2"><div><label>Session date</label><input class="field" id="sdate" type="date" value="${day(s.session_date)}"></div><div><label>Session total</label><input class="field" id="sessionCost" value="${money(s.cost)}" readonly></div></div>
-      <label>Session notes</label><textarea class="field" id="snotes">${esc(s.notes || '')}</textarea>
-      <label class="screen-only">Invoice due date (optional)<input class="field" id="invoiceDueDateSession" type="date"></label>
-      <p class="session-actions noprint" style="text-align:center"><button class="btn" id="save">Save session</button> <button class="btn green" id="createInvoice">Create invoice</button> <button class="btn" id="printSession">Print session</button> <a class="btn dark" href="#/patient/${s.patient_id}">Back to file</a></p></div>` + printTemplateMarkup(template, 'footer');
+      <div class="grid2"><div><label>Session date</label><input class="field" id="sdate" type="date" value="${day(s.session_date)}" ${editable ? '' : 'readonly'}></div><div><label>Session total</label><input class="field" id="sessionCost" value="${money(s.cost)}" readonly></div></div>
+      <label>Session notes</label><textarea class="field" id="snotes" ${editable ? '' : 'readonly'}>${esc(s.notes || '')}</textarea>
+      ${can('invoices', 'create') ? '<label class="screen-only">Invoice due date (optional)<input class="field" id="invoiceDueDateSession" type="date"></label>' : ''}
+      <p class="session-actions noprint" style="text-align:center">${editable ? '<button class="btn" id="save">Save session</button>' : ''} ${can('invoices', 'create') ? '<button class="btn green" id="createInvoice">Create invoice</button>' : ''} <button class="btn" id="printSession">Print session</button> <a class="btn dark" href="#/patient/${s.patient_id}">Back to file</a></p></div>` + printTemplateMarkup(template, 'footer');
   },
 
   invoices() {
+    const canViewInvoices = can('invoices', 'view');
+    const canCreateInvoice = can('invoices', 'create') && can('patients', 'view');
     const render = tryDo(async () => {
+      if (!canViewInvoices) return;
       const params = new URLSearchParams({ name: $('#invoiceSearch').value, status: $('#invoiceStatus').value });
       const invoices = await api('/invoices?' + params);
       $('#invoiceRows').innerHTML = invoices.length ? invoices.map(invoice =>
@@ -259,62 +417,67 @@ const routes = {
       ).join('') : '<tr><td colspan="7" class="empty">No invoices found.</td></tr>';
     });
     setTimeout(async () => {
-      const patients = await api('/patients');
-      $('#invoicePatient').innerHTML = '<option value="">Choose patient</option>' + patients.map(patient =>
-        `<option value="${patient.id}">${esc(patient.name)} · ${esc(patient.phone)}</option>`).join('');
-      $('#invoiceIssueDate').value = today();
-      const updateTotal = () => {
-        const subtotal = [...document.querySelectorAll('.invoice-line')].reduce((sum, line) =>
-          sum + Math.round(Number(line.querySelector('[name=quantity]').value || 0) * Number(line.querySelector('[name=unit_price]').value || 0) * 100), 0);
-        const discount = Math.round(Number($('#invoiceDiscount').value || 0) * 100);
-        $('#invoiceTotal').textContent = money(Math.max(subtotal - discount, 0) / 100);
-      };
-      const addLine = () => {
-        const row = document.createElement('div');
-        row.className = 'invoice-line';
-        row.innerHTML = '<input class="field" name="description" placeholder="Item or service description" maxlength="200" required><input class="field" name="quantity" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity" required><input class="field" name="unit_price" type="number" min="0" step="0.01" placeholder="Unit price" required><button class="btn sm dark invoice-remove-line" type="button" aria-label="Remove item">×</button>';
-        row.querySelectorAll('input').forEach(input => input.oninput = updateTotal);
-        row.querySelector('.invoice-remove-line').onclick = () => { if (document.querySelectorAll('.invoice-line').length > 1) row.remove(); updateTotal(); };
-        $('#invoiceLines').append(row);
-        updateTotal();
-      };
-      addLine();
-      $('#addInvoiceLine').onclick = addLine;
-      $('#invoiceDiscount').oninput = updateTotal;
-      $('#invoiceForm').onsubmit = tryDo(async event => {
-        event.preventDefault();
-        const items = [...document.querySelectorAll('.invoice-line')].map(line => ({
-          description: line.querySelector('[name=description]').value,
-          quantity: line.querySelector('[name=quantity]').value,
-          unit_price: line.querySelector('[name=unit_price]').value
-        }));
-        const invoice = await api('/invoices', { method: 'POST', body: {
-          patient_id: $('#invoicePatient').value,
-          issue_date: $('#invoiceIssueDate').value,
-          due_date: $('#invoiceDueDate').value || null,
-          discount: $('#invoiceDiscount').value || 0,
-          items
-        }});
-        toast('Invoice created');
-        location.hash = `#/invoice/${invoice.id}`;
-      });
-      $('#invoiceSearch').oninput = render;
-      $('#invoiceStatus').onchange = render;
-      render();
+      if (canCreateInvoice) {
+        const patients = await api('/patients');
+        $('#invoicePatient').innerHTML = '<option value="">Choose patient</option>' + patients.map(patient =>
+          `<option value="${patient.id}">${esc(patient.name)} · ${esc(patient.phone)}</option>`).join('');
+        $('#invoiceIssueDate').value = today();
+        const updateTotal = () => {
+          const subtotal = [...document.querySelectorAll('.invoice-line')].reduce((sum, line) =>
+            sum + Math.round(Number(line.querySelector('[name=quantity]').value || 0) * Number(line.querySelector('[name=unit_price]').value || 0) * 100), 0);
+          const discount = Math.round(Number($('#invoiceDiscount').value || 0) * 100);
+          $('#invoiceTotal').textContent = money(Math.max(subtotal - discount, 0) / 100);
+        };
+        const addLine = () => {
+          const row = document.createElement('div');
+          row.className = 'invoice-line';
+          row.innerHTML = '<input class="field" name="description" placeholder="Item or service description" maxlength="200" required><input class="field" name="quantity" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity" required><input class="field" name="unit_price" type="number" min="0" step="0.01" placeholder="Unit price" required><button class="btn sm dark invoice-remove-line" type="button" aria-label="Remove item">×</button>';
+          row.querySelectorAll('input').forEach(input => input.oninput = updateTotal);
+          row.querySelector('.invoice-remove-line').onclick = () => { if (document.querySelectorAll('.invoice-line').length > 1) row.remove(); updateTotal(); };
+          $('#invoiceLines').append(row);
+          updateTotal();
+        };
+        addLine();
+        $('#addInvoiceLine').onclick = addLine;
+        $('#invoiceDiscount').oninput = updateTotal;
+        $('#invoiceForm').onsubmit = tryDo(async event => {
+          event.preventDefault();
+          const items = [...document.querySelectorAll('.invoice-line')].map(line => ({
+            description: line.querySelector('[name=description]').value,
+            quantity: line.querySelector('[name=quantity]').value,
+            unit_price: line.querySelector('[name=unit_price]').value
+          }));
+          const invoice = await api('/invoices', { method: 'POST', body: {
+            patient_id: $('#invoicePatient').value,
+            issue_date: $('#invoiceIssueDate').value,
+            due_date: $('#invoiceDueDate').value || null,
+            discount: $('#invoiceDiscount').value || 0,
+            items
+          }});
+          toast('Invoice created');
+          location.hash = canViewInvoices ? `#/invoice/${invoice.id}` : '#/main';
+        });
+      }
+      if (canViewInvoices) {
+        $('#invoiceSearch').oninput = render;
+        $('#invoiceStatus').onchange = render;
+        render();
+      }
     });
-    return head() + `<form class="panel" id="invoiceForm"><h2 class="title"><b>Create invoice</b></h2>
+    return head() + `${canCreateInvoice ? `<form class="panel" id="invoiceForm"><h2 class="title"><b>Create invoice</b></h2>
       <div class="grid2"><select class="field" id="invoicePatient" required aria-label="Patient"></select><input class="field" id="invoiceIssueDate" type="date" required aria-label="Issue date"></div>
       <div class="grid2"><label>Due date (optional)<input class="field" id="invoiceDueDate" type="date"></label><label>Discount ($)<input class="field" id="invoiceDiscount" type="number" min="0" step="0.01" value="0"></label></div>
       <div id="invoiceLines"></div><button class="btn dark" type="button" id="addInvoiceLine">Add item</button>
-      <p class="invoice-total">Total: <b id="invoiceTotal">$0</b></p><p style="text-align:center"><button class="btn green">Create invoice</button></p></form>
+      <p class="invoice-total">Total: <b id="invoiceTotal">$0</b></p><p style="text-align:center"><button class="btn green">Create invoice</button></p></form>` : ''}
+      ${canViewInvoices ? `
       <div class="panel"><h2 class="title"><b>Billing &amp; Invoices</b></h2><div class="filters"><input class="field" id="invoiceSearch" placeholder="Patient name"><select class="field" id="invoiceStatus" aria-label="Invoice status"><option value="">All statuses</option><option>unpaid</option><option>partially paid</option><option>paid</option><option>overdue</option><option>void</option></select></div>
-      <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Patient</th><th>Issued</th><th>Due</th><th>Total</th><th>Balance</th><th>Status</th></tr></thead><tbody id="invoiceRows"><tr><td colspan="7">Loading...</td></tr></tbody></table></div></div>`;
+      <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Patient</th><th>Issued</th><th>Due</th><th>Total</th><th>Balance</th><th>Status</th></tr></thead><tbody id="invoiceRows"><tr><td colspan="7">Loading...</td></tr></tbody></table></div></div>` : ''}`;
   },
 
   async invoice(id) {
     const [invoice, template] = await Promise.all([api(`/invoices/${id}`), api('/print-template')]);
     const refundable = Math.max(Number(invoice.paid) - Number(invoice.refunded), 0);
-    const canVoid = invoice.status !== 'void' && refundable < 0.005;
+    const canVoid = invoice.can_void;
     setTimeout(() => {
       $('#invoicePayment')?.addEventListener('submit', tryDo(async event => {
         event.preventDefault();
@@ -340,6 +503,7 @@ const routes = {
       }));
       $('#printInvoice')?.addEventListener('click', () => print());
     });
+    const canViewPayments = can('payments', 'view');
     const paymentRows = invoice.payments.length ? invoice.payments.map(payment =>
       `<tr><td>${day(payment.paid_at)}</td><td>${esc(payment.type)}</td><td>${esc(payment.batch_number || '')}</td><td>${money(payment.amount)}</td></tr>`).join('')
       : '<tr><td colspan="4" class="empty">No payments recorded.</td></tr>';
@@ -355,14 +519,14 @@ const routes = {
       <p>Issue date: ${day(invoice.issue_date)}${invoice.due_date ? ` · Due date: ${day(invoice.due_date)}` : ''}</p>
       <div class="table-wrap"><table><thead><tr><th>Description</th><th>Quantity</th><th>Unit price</th><th>Total</th></tr></thead><tbody>
       ${invoice.items.map(item => `<tr><td>${esc(item.description)}</td><td>${Number(item.quantity)}</td><td>${money(item.unit_price)}</td><td>${money(item.line_total)}</td></tr>`).join('')}
-      </tbody><tfoot><tr><th colspan="3">Subtotal</th><td>${money(invoice.subtotal)}</td></tr><tr><th colspan="3">Discount</th><td>−${money(invoice.discount)}</td></tr><tr><th colspan="3">Invoice total</th><td><b>${money(invoice.total)}</b></td></tr><tr><th colspan="3">Paid</th><td>${money(invoice.paid)}</td></tr><tr><th colspan="3">Refunded</th><td>${money(invoice.refunded)}</td></tr><tr><th colspan="3">Balance due</th><td><b>${money(invoice.balance)}</b></td></tr></tfoot></table></div>
+      </tbody><tfoot><tr><th colspan="3">Subtotal</th><td>${money(invoice.subtotal)}</td></tr><tr><th colspan="3">Discount</th><td>−${money(invoice.discount)}</td></tr><tr><th colspan="3">Invoice total</th><td><b>${money(invoice.total)}</b></td></tr>${canViewPayments ? `<tr><th colspan="3">Paid</th><td>${money(invoice.paid)}</td></tr><tr><th colspan="3">Refunded</th><td>${money(invoice.refunded)}</td></tr>` : ''}<tr><th colspan="3">Balance due</th><td><b>${money(invoice.balance)}</b></td></tr></tfoot></table></div>
       ${invoice.status === 'void' ? `<p class="invoice-warning">Voided: ${esc(invoice.void_reason || '')}</p>` : ''}
-      <h3>Payment history</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table></div>
-      <h3>Refund history</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Method</th><th>Reason</th><th>Amount</th></tr></thead><tbody>${refundRows}</tbody></table></div>
+      ${canViewPayments ? `<h3>Payment history</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${paymentRows}</tbody></table></div>
+      <h3>Refund history</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Method</th><th>Reason</th><th>Amount</th></tr></thead><tbody>${refundRows}</tbody></table></div>` : ''}
       <div class="noprint invoice-actions">
-        ${invoice.status !== 'void' && invoice.balance > 0.001 ? `<form id="invoicePayment" class="panel"><h3>Record payment</h3><div class="filters"><input class="field" name="amount" type="number" min="0.01" max="${Number(invoice.balance).toFixed(2)}" step="0.01" placeholder="Amount (balance ${money(invoice.balance)})" required><select class="field" name="type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="batch_number" placeholder="Reference (optional)"><input class="field" name="paid_at" type="date" aria-label="Payment date"></div><button class="btn green">Record payment</button></form>` : ''}
-        ${invoice.status !== 'void' && refundable > 0.001 ? `<form id="invoiceRefund" class="panel"><h3>Record refund</h3><div class="filters"><input class="field" name="amount" type="number" min="0.01" max="${refundable.toFixed(2)}" step="0.01" placeholder="Refund (available ${money(refundable)})" required><select class="field" name="type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="reason" maxlength="500" placeholder="Refund reason" required><input class="field" name="refunded_at" type="date" aria-label="Refund date"></div><button class="btn">Record refund</button></form>` : ''}
-        ${canVoid ? `<form id="invoiceVoid" class="panel"><h3>Void invoice</h3><input class="field" name="reason" maxlength="500" placeholder="Reason for voiding" required><button class="btn red">Void invoice</button></form>` : ''}
+        ${can('payments', 'create') && invoice.status !== 'void' && invoice.balance > 0.001 ? `<form id="invoicePayment" class="panel"><h3>Record payment</h3><div class="filters"><input class="field" name="amount" type="number" min="0.01" max="${Number(invoice.balance).toFixed(2)}" step="0.01" placeholder="Amount (balance ${money(invoice.balance)})" required><select class="field" name="type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="batch_number" placeholder="Reference (optional)"><input class="field" name="paid_at" type="date" aria-label="Payment date"></div><button class="btn green">Record payment</button></form>` : ''}
+        ${can('payments', 'view') && can('payments', 'edit') && invoice.status !== 'void' && refundable > 0.001 ? `<form id="invoiceRefund" class="panel"><h3>Record refund</h3><div class="filters"><input class="field" name="amount" type="number" min="0.01" max="${refundable.toFixed(2)}" step="0.01" placeholder="Refund (available ${money(refundable)})" required><select class="field" name="type"><option>Cash</option><option>Card</option><option>Transfer</option></select><input class="field" name="reason" maxlength="500" placeholder="Refund reason" required><input class="field" name="refunded_at" type="date" aria-label="Refund date"></div><button class="btn">Record refund</button></form>` : ''}
+        ${canVoid && can('invoices', 'edit') ? `<form id="invoiceVoid" class="panel"><h3>Void invoice</h3><input class="field" name="reason" maxlength="500" placeholder="Reason for voiding" required><button class="btn red">Void invoice</button></form>` : ''}
         <button class="btn" id="printInvoice">Print invoice</button> <a class="btn dark" href="#/invoices">Back to invoices</a>
       </div></div><section class="invoice-print-document" aria-label="Printable invoice">
         <h2 class="invoice-print-title"><span>INVOICE</span></h2>
@@ -391,8 +555,7 @@ const routes = {
             <tr><th>Subtotal</th><td>${money(invoice.subtotal)}</td></tr>
             <tr><th>Discount</th><td>−${money(invoice.discount)}</td></tr>
             <tr class="invoice-print-grand-total"><th>Grand Total</th><td>${money(invoice.total)}</td></tr>
-            <tr><th>Paid Amount</th><td>${money(invoice.paid)}</td></tr>
-            <tr><th>Refunded</th><td>${money(invoice.refunded)}</td></tr>
+            ${canViewPayments ? `<tr><th>Paid Amount</th><td>${money(invoice.paid)}</td></tr><tr><th>Refunded</th><td>${money(invoice.refunded)}</td></tr>` : ''}
             <tr class="invoice-print-balance"><th>Balance</th><td>${money(invoice.balance)}</td></tr>
           </tbody></table>
         </div>
@@ -405,7 +568,7 @@ const routes = {
     const render = tryDo(async () => {
       const qs = new URLSearchParams({ date: $('#fd').value, name: $('#fn').value, amount: $('#fa').value, batch: $('#fb').value });
       const l = await api('/payments?' + qs);
-      $('#tb').innerHTML = l.length ? l.map(p => `<tr><td>${p.invoice_id ? `<a class="btn sm" href="#/invoice/${p.invoice_id}">View invoice</a>` : `<button class="btn sm red" data-d="${p.id}">Delete</button>`}</td><td>${p.amount < 0 ? `-${money(-p.amount)}` : money(p.amount)}</td><td>${esc(p.type)}</td><td>${esc(p.batch_number || '')}</td><td>${day(p.paid_at)}</td><td>${esc(p.patient_name)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No payments found.</td></tr>';
+      $('#tb').innerHTML = l.length ? l.map(p => `<tr><td>${p.invoice_id ? `<a class="btn sm" href="#/invoice/${p.invoice_id}">View invoice</a>` : (can('payments', 'delete') ? `<button class="btn sm red" data-d="${p.id}">Delete</button>` : '')}</td><td>${p.amount < 0 ? `-${money(-p.amount)}` : money(p.amount)}</td><td>${esc(p.type)}</td><td>${esc(p.batch_number || '')}</td><td>${day(p.paid_at)}</td><td>${esc(p.patient_name)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No payments found.</td></tr>';
       document.querySelectorAll('[data-d]').forEach(b => b.onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this payment?'))) { await api('/payments/' + b.dataset.d, { method: 'DELETE' }); render(); } }));
     });
     setTimeout(() => { $('#go').onclick = render; render(); });
@@ -415,62 +578,91 @@ const routes = {
   },
 
   expenses() {
+    const canViewExpenses = can('expenses', 'view');
     const render = tryDo(async () => {
+      if (!canViewExpenses) return;
       const l = await api('/expenses');
-      $('#tb').innerHTML = l.length ? l.map(x => `<tr><td>${day(x.spent_at)}</td><td>${esc(x.title)}</td><td>${money(x.amount)}</td><td>${esc(x.note || '')}</td><td><button class="btn sm red" data-d="${x.id}">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No expenses yet. Add the first one above.</td></tr>';
+      $('#tb').innerHTML = l.length ? l.map(x => `<tr><td>${day(x.spent_at)}</td><td>${esc(x.title)}</td><td>${money(x.amount)}</td><td>${esc(x.note || '')}</td><td>${can('expenses', 'delete') ? `<button class="btn sm red" data-d="${x.id}">Delete</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No expenses yet.</td></tr>';
       document.querySelectorAll('[data-d]').forEach(b => b.onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this expense?'))) { await api('/expenses/' + b.dataset.d, { method: 'DELETE' }); render(); } }));
     });
-    setTimeout(() => { render(); $('#ef').onsubmit = tryDo(async e => { e.preventDefault(); await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); e.target.reset(); toast('Expense saved'); render(); }); });
-    return head() + `<form class="panel" id="ef"><h2 class="title"><b>Expenses</b></h2><div class="filters"><input class="field" name="title" placeholder="Title" required><input class="field" name="amount" type="number" step="0.01" min="0.01" placeholder="Amount" required><input class="field" name="spent_at" type="date"></div>
+    setTimeout(() => {
+      if (canViewExpenses) render();
+      if ($('#ef')) $('#ef').onsubmit = tryDo(async e => { e.preventDefault(); await api('/expenses', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); e.target.reset(); toast('Expense saved'); render(); });
+    });
+    return head() + `${can('expenses', 'create') ? `<form class="panel" id="ef"><h2 class="title"><b>Expenses</b></h2><div class="filters"><input class="field" name="title" placeholder="Title" required><input class="field" name="amount" type="number" step="0.01" min="0.01" placeholder="Amount" required><input class="field" name="spent_at" type="date"></div>
       <input class="field" name="note" placeholder="note" style="margin-top:16px"><p style="text-align:center"><button class="btn">Add expense</button></p></form>
-      <div class="panel"><table><thead><tr><th>Date</th><th>Title</th><th>Amount</th><th>Note</th><th>Action</th></tr></thead><tbody id="tb"></tbody></table></div>`;
+      ` : ''}${canViewExpenses ? '<div class="panel"><table><thead><tr><th>Date</th><th>Title</th><th>Amount</th><th>Note</th><th>Action</th></tr></thead><tbody id="tb"></tbody></table></div>' : ''}`;
   },
 
   appointments() {
+    const canViewAppointments = can('appointments', 'view');
+    const canCreateAppointment = can('appointments', 'create') && can('patients', 'view');
     const render = tryDo(async () => {
+      if (!canViewAppointments) return;
       const l = await api('/appointments?day=' + $('#ad').value);
-      $('#tb').innerHTML = l.length ? l.map(a => `<tr><td>${esc(String(a.appt_at).replace('T', ' ').slice(0, 16))}</td><td><a href="#/patient/${a.patient_id}">${esc(a.patient_name)}</a></td><td>${esc(a.phone)}</td><td>${esc(a.reason || '')}</td><td>${a.status}</td><td><div class="row-actions"><button class="btn sm green" data-s="${a.id}:done">Done</button><button class="btn sm red" data-s="${a.id}:cancelled">Cancel</button></div></td></tr>`).join('') : '<tr><td colspan="6" class="empty">No appointments for this day.</td></tr>';
+      $('#tb').innerHTML = l.length ? l.map(a => `<tr><td>${esc(String(a.appt_at).replace('T', ' ').slice(0, 16))}</td><td>${can('patients', 'view') ? `<a href="#/patient/${a.patient_id}">${esc(a.patient_name)}</a>` : esc(a.patient_name)}</td><td>${esc(a.phone)}</td><td>${esc(a.reason || '')}</td><td>${a.status}</td><td><div class="row-actions">${can('appointments', 'edit') ? `<button class="btn sm green" data-s="${a.id}:done">Done</button><button class="btn sm red" data-s="${a.id}:cancelled">Cancel</button>` : ''}</div></td></tr>`).join('') : '<tr><td colspan="6" class="empty">No appointments for this day.</td></tr>';
       document.querySelectorAll('[data-s]').forEach(b => b.onclick = tryDo(async () => { const [i, st] = b.dataset.s.split(':'); await api('/appointments/' + i, { method: 'PATCH', body: { status: st } }); render(); }));
     });
     setTimeout(async () => {
-      $('#ad').value = new Date().toISOString().slice(0, 10); $('#ad').onchange = render; render();
-      const pts = await api('/patients'); $('#ap').innerHTML = pts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-      $('#af').onsubmit = tryDo(async e => { e.preventDefault(); await api('/appointments', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Appointment booked'); render(); });
+      if (canViewAppointments) {
+        $('#ad').value = new Date().toISOString().slice(0, 10);
+        $('#ad').onchange = render;
+        render();
+      }
+      if (canCreateAppointment) {
+        const pts = await api('/patients'); $('#ap').innerHTML = pts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+        $('#af').onsubmit = tryDo(async e => { e.preventDefault(); await api('/appointments', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Appointment booked'); render(); });
+      }
     });
-    return head() + `<form class="panel" id="af"><h2 class="title"><b>Appointments</b></h2><div class="filters"><select class="field" name="patient_id" id="ap" aria-label="Patient"></select><input class="field" name="appt_at" type="datetime-local" required><input class="field" name="reason" placeholder="Reason"></div><p style="text-align:center"><button class="btn">Book appointment</button></p></form>
-      <div class="panel"><input class="field" id="ad" type="date" style="max-width:260px;margin-bottom:16px" aria-label="Day"><table><thead><tr><th>Time</th><th>Patient</th><th>Phone</th><th>Reason</th><th>Status</th><th>Action</th></tr></thead><tbody id="tb"></tbody></table></div>`;
+    return head() + `${canCreateAppointment ? `<form class="panel" id="af"><h2 class="title"><b>Appointments</b></h2><div class="filters"><select class="field" name="patient_id" id="ap" aria-label="Patient"></select><input class="field" name="appt_at" type="datetime-local" required><input class="field" name="reason" placeholder="Reason"></div><p style="text-align:center"><button class="btn">Book appointment</button></p></form>` : ''}
+      ${canViewAppointments ? '<div class="panel"><input class="field" id="ad" type="date" style="max-width:260px;margin-bottom:16px" aria-label="Day"><table><thead><tr><th>Time</th><th>Patient</th><th>Phone</th><th>Reason</th><th>Status</th><th>Action</th></tr></thead><tbody id="tb"></tbody></table></div>' : ''}`;
   },
 
   async box() {
     const d = await api('/dashboard');
-    return head() + `<div class="panel"><h2 class="title"><b>box</b> | today</h2><div class="cards3"><div class="stat g"><h4>Payments today</h4><p>${money(d.payments_today)}</p></div><div class="stat b"><h4>Cash in box</h4><p>${money(d.box)}</p></div><div class="stat r"><h4>Sessions today</h4><p>${d.reviews}</p></div></div></div>`;
+    const cards = [
+      can('payments', 'view') && `<div class="stat g"><h4>Payments today</h4><p>${money(d.payments_today)}</p></div>`,
+      can('payments', 'view') && can('expenses', 'view') && `<div class="stat b"><h4>Cash in box</h4><p>${money(d.box)}</p></div>`,
+      can('sessions', 'view') && `<div class="stat r"><h4>Sessions today</h4><p>${d.reviews}</p></div>`
+    ].filter(Boolean);
+    return head() + `<div class="panel"><h2 class="title"><b>box</b> | today</h2><div class="cards3">${cards.join('')}</div></div>`;
   },
 
   async reports() {
-    const [pay, exp] = await Promise.all([api('/payments'), api('/expenses')]);
+    const [pay, exp] = await Promise.all([
+      can('payments', 'view') ? api('/payments') : Promise.resolve([]),
+      can('expenses', 'view') ? api('/expenses') : Promise.resolve([])
+    ]);
     const by = {}; pay.forEach(p => (by[day(p.paid_at).slice(0, 7)] ||= { i: 0, o: 0 }).i += +p.amount); exp.forEach(x => (by[day(x.spent_at).slice(0, 7)] ||= { i: 0, o: 0 }).o += +x.amount);
     const rows = Object.entries(by).sort().reverse();
     return head() + `<div class="panel"><h2 class="title"><b>Reports</b></h2><table><thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net</th></tr></thead><tbody>${rows.map(([m, v]) => `<tr><td>${m}</td><td>${money(v.i)}</td><td>${money(v.o)}</td><td style="color:${v.i - v.o < 0 ? 'var(--red)' : 'var(--green)'}">${money(v.i - v.o)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No payments or expenses recorded yet.</td></tr>'}</tbody></table></div>`;
   },
 
   async users() {
-    if (me.role !== 'admin') return head() + '<div class="panel"><p class="empty">Only admins can manage users.</p></div>';
-    const l = await api('/users');
+    const isAdmin = me.role === 'admin';
+    const [l, permissionSettings] = await Promise.all([
+      api('/users'),
+      isAdmin ? api('/permissions') : Promise.resolve(null)
+    ]);
     setTimeout(() => {
-      $('#uf').onsubmit = tryDo(async e => { e.preventDefault(); await api('/users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('User added'); routeNow(); });
+      if ($('#uf')) $('#uf').onsubmit = tryDo(async e => { e.preventDefault(); await api('/users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('User added'); routeNow(); });
+      if (!isAdmin) return;
       document.querySelectorAll('[data-a]').forEach(b => b.onclick = tryDo(async () => { const [i, v] = b.dataset.a.split(':'); await api('/users/' + i, { method: 'PATCH', body: { active: v === '1' } }); routeNow(); }));
+      bindPermissionEditor(permissionSettings);
     });
-    return head() + `<form class="panel" id="uf"><h2 class="title"><b>Users</b></h2><div class="filters"><input class="field" name="name" placeholder="Name" required><input class="field" name="email" type="email" placeholder="E-mail" required><input class="field" name="password" type="password" minlength="8" placeholder="Password (8+ characters)" required></div>
-      <div class="grid2" style="margin-top:16px"><input class="field" name="phone" placeholder="Phone"><select class="field" name="role"><option>doctor</option><option>assistant</option><option>admin</option></select></div><p style="text-align:center"><button class="btn">Add user</button></p></form>
-      <div class="panel"><table><thead><tr><th>Name</th><th>E-mail</th><th>Role</th><th>Status</th><th>Action</th></tr></thead><tbody>${l.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td><td>${u.active ? 'Active' : 'Disabled'}</td><td>${u.id === me.id ? '' : `<button class="btn sm ${u.active ? 'red' : 'green'}" data-a="${u.id}:${u.active ? 0 : 1}">${u.active ? 'Disable' : 'Enable'}</button>`}</td></tr>`).join('')}</tbody></table></div>`;
+    return head() + `<h2 class="title"><b>User Management</b></h2>${isAdmin ? `<form class="panel" id="uf"><h2 class="title"><b>Add user</b></h2><div class="filters"><input class="field" name="name" placeholder="Name" required><input class="field" name="email" type="email" placeholder="E-mail" required><input class="field" name="password" type="password" minlength="8" placeholder="Password (8+ characters)" required></div>
+      <div class="grid2" style="margin-top:16px"><input class="field" name="phone" placeholder="Phone"><select class="field" name="role"><option value="doctor">doctor</option><option value="assistant">assistant</option><option value="receptionist">receptionist</option><option value="admin">admin</option></select></div><p style="text-align:center"><button class="btn">Add user</button></p></form>` : ''}
+      <div class="panel"><table><thead><tr><th>Name</th>${isAdmin ? '<th>E-mail</th>' : ''}<th>Role</th><th>Status</th>${isAdmin ? '<th>Action</th>' : ''}</tr></thead><tbody>${l.map(u => `<tr><td>${esc(u.name)}</td>${isAdmin ? `<td>${esc(u.email)}</td>` : ''}<td>${u.role}</td><td>${u.active ? 'Active' : 'Disabled'}</td>${isAdmin ? `<td>${u.id === me.id ? '' : `<button class="btn sm ${u.active ? 'red' : 'green'}" data-a="${u.id}:${u.active ? 0 : 1}">${u.active ? 'Disable' : 'Enable'}</button>`}</td>` : ''}</tr>`).join('')}</tbody></table></div>
+      ${isAdmin ? permissionEditorMarkup(permissionSettings) : ''}`;
   },
 
   async services() {
-    if (me.role !== 'admin')
-      return head() + '<div class="panel"><p class="empty">Only admins can manage services.</p></div>';
-    const list = await api('/services?include_inactive=true');
+    const canViewServices = can('services', 'view');
+    const list = canViewServices ? await api('/services?include_inactive=true') : [];
+    const canCreate = can('services', 'create');
+    const canEdit = can('services', 'edit');
     setTimeout(() => {
-      $('#serviceForm').onsubmit = tryDo(async event => {
+      if ($('#serviceForm')) $('#serviceForm').onsubmit = tryDo(async event => {
         event.preventDefault();
         await api('/services', { method: 'POST', body: Object.fromEntries(new FormData(event.target)) });
         event.target.reset();
@@ -503,23 +695,23 @@ const routes = {
     });
     return head() + `<div class="panel"><h2 class="title"><b>Services</b></h2>
       <p class="muted">Set treatment prices and appointment durations. New services start at $0.00; configure prices before adding them to a session.</p>
-      <form class="grid2" id="serviceForm">
+      ${canCreate ? `<form class="grid2" id="serviceForm">
         <input class="field" name="name" placeholder="Service name" maxlength="100" required>
         <input class="field" name="icon" placeholder="Icon (emoji)" maxlength="16" value="🦷" aria-label="Icon">
         <input class="field" name="duration_minutes" type="number" min="1" max="1440" placeholder="Duration in minutes" required>
         <input class="field" name="price" type="number" min="0" step="0.01" placeholder="Price ($)" required>
         <p style="grid-column:1/-1;text-align:center"><button class="btn">Add service</button></p>
-      </form></div>
-      <div class="panel service-management"><table><thead><tr><th>Service</th><th>Duration (min)</th><th>Price ($)</th><th>Status</th><th>Action</th></tr></thead><tbody>
+      </form>` : ''}</div>
+      ${canViewServices ? `<div class="panel service-management"><table><thead><tr><th>Service</th><th>Duration (min)</th><th>Price ($)</th><th>Status</th>${canEdit ? '<th>Action</th>' : ''}</tr></thead><tbody>
       ${list.map(service => `<tr><td><form class="service-row" id="service-${service.id}" data-service-form="${service.id}">
-        <input class="field service-icon-field" name="icon" value="${esc(service.icon)}" maxlength="16" aria-label="Service icon">
-        <input class="field" name="name" value="${esc(service.name)}" maxlength="100" required aria-label="Service name"></form></td>
-        <td><input class="field service-duration-field" form="service-${service.id}" name="duration_minutes" type="number" min="1" max="1440" value="${service.duration_minutes}" required aria-label="Duration in minutes"></td>
-        <td><input class="field service-price-field" form="service-${service.id}" name="price" type="number" min="0" step="0.01" value="${service.price}" required aria-label="Price"></td>
+        <input class="field service-icon-field" name="icon" value="${esc(service.icon)}" maxlength="16" aria-label="Service icon" ${canEdit ? '' : 'readonly'}>
+        <input class="field" name="name" value="${esc(service.name)}" maxlength="100" required aria-label="Service name" ${canEdit ? '' : 'readonly'}></form></td>
+        <td><input class="field service-duration-field" form="service-${service.id}" name="duration_minutes" type="number" min="1" max="1440" value="${service.duration_minutes}" required aria-label="Duration in minutes" ${canEdit ? '' : 'readonly'}></td>
+        <td><input class="field service-price-field" form="service-${service.id}" name="price" type="number" min="0" step="0.01" value="${service.price}" required aria-label="Price" ${canEdit ? '' : 'readonly'}></td>
         <td>${service.active ? 'Active' : 'Inactive'}</td>
-        <td><div class="row-actions"><button class="btn sm" form="service-${service.id}">Save</button>
-          <button type="button" class="btn sm ${service.active ? 'red' : 'green'}" data-service-active="${service.id}" data-active="${service.active}">${service.active ? 'Deactivate' : 'Activate'}</button></div></td>
-        </tr>`).join('')}</tbody></table></div>`;
+        ${canEdit ? `<td><div class="row-actions"><button class="btn sm" form="service-${service.id}">Save</button>
+          <button type="button" class="btn sm ${service.active ? 'red' : 'green'}" data-service-active="${service.id}" data-active="${service.active}">${service.active ? 'Deactivate' : 'Activate'}</button></div></td>` : ''}
+        </tr>`).join('')}</tbody></table></div>` : ''}`;
   },
 
   async settings() {
@@ -655,6 +847,7 @@ const routes = {
         $('#savePrintTemplate').disabled = true;
         toast('Print template saved');
       });
+
     });
     const templateSection = (section, title) => {
       const mode = template[`${section}_mode`];
@@ -680,14 +873,64 @@ const routes = {
         <form id="printTemplateForm">${templateSection('header', 'Print header')}${templateSection('footer', 'Print footer')}
           <p style="text-align:center"><button class="btn" id="savePrintTemplate" disabled>Save print template</button></p></form>`
         : '<p class="muted">Clinic printing templates are managed by an administrator.</p>'}
-      </div>`;
+      </div>
+      `;
   },
 };
 
 async function routeNow() {
   const [, name = 'main', a, b] = location.hash.split('/');
+  const profile = await profileReady;
+  if (!profile) {
+    $('#app').innerHTML = '<div class="panel"><p class="empty">Could not load your account permissions. Please refresh or sign in again.</p></div>';
+    return;
+  }
+  try {
+    const refreshedProfile = await api('/me');
+    Object.assign(me, refreshedProfile);
+    localStorage.user = JSON.stringify(me);
+    $('#uname').textContent = me.name || '';
+    renderAvatar(me.photo, me.name);
+  } catch (error) {
+    $('#app').innerHTML = `<div class="panel"><p class="empty">${esc(error.message)}</p></div>`;
+    return;
+  }
+  applyNavigationPermissions();
   document.querySelectorAll('#nav a').forEach(x => x.classList.toggle('on', x.getAttribute('href') === '#/' + name));
   const fn = routes[name] || routes.main;
+  const access = {
+    'new-patient': ['patients', 'create'],
+    patients: ['patients', 'view'],
+    patient: ['patients', b === 'edit' ? 'edit' : 'view'],
+    statement: ['reports', 'view'],
+    session: ['sessions', 'view'],
+    invoices: ['invoices', 'view'],
+    invoice: ['invoices', 'view'],
+    payments: ['payments', 'view'],
+    expenses: ['expenses', 'view'],
+    appointments: ['appointments', 'view'],
+    services: ['services', 'view'],
+    users: ['users', 'view'],
+    settings: ['settings', 'view'],
+    reports: ['reports', 'view']
+  }[name];
+  const createAccess = {
+    invoices: can('invoices', 'create') && can('patients', 'view'),
+    expenses: can('expenses', 'create'),
+    appointments: can('appointments', 'create') && can('patients', 'view'),
+    services: can('services', 'create')
+  }[name];
+  const allowed = ['invoices', 'expenses', 'appointments', 'services'].includes(name)
+    ? can(name, 'view') || createAccess
+    : !access || can(...access);
+  if (!allowed) {
+    $('#app').innerHTML = '<div class="panel"><p class="empty">You do not have permission to view this feature.</p></div>';
+    return;
+  }
+  if (name === 'box' && !can('payments', 'view') && !can('sessions', 'view')) {
+    $('#app').innerHTML = '<div class="panel"><p class="empty">You do not have permission to view this feature.</p></div>';
+    return;
+  }
   try { $('#app').innerHTML = await fn(a, b); scrollTo(0, 0); }
   catch (e) { $('#app').innerHTML = `<div class="panel"><p class="empty">${esc(e.message)}</p></div>`; }
 }
