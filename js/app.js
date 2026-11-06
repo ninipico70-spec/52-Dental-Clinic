@@ -2,10 +2,30 @@ const token = localStorage.token;
 if (!token) location.href = '/login.html';
 const me = JSON.parse(localStorage.user || '{}');
 const $ = s => document.querySelector(s);
+let excelJsLoad;
+const loadExcelJS = () => {
+  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  if (!excelJsLoad) {
+    excelJsLoad = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/js/vendor/exceljs.min.js';
+      script.onload = () => window.ExcelJS
+        ? resolve(window.ExcelJS)
+        : reject(new Error('Excel support could not be initialized.'));
+      script.onerror = () => reject(new Error('Could not load Excel support.'));
+      document.head.append(script);
+    }).catch(error => {
+      excelJsLoad = null;
+      throw error;
+    });
+  }
+  return excelJsLoad;
+};
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => '$' + (+n || 0).toFixed(2).replace(/\.00$/, '');
 const day = d => d ? String(d).slice(0, 10) : '';
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const localDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 function renderAvatar(photo, name) {
   const avatar = $('#av');
   avatar.replaceChildren();
@@ -112,8 +132,7 @@ function applyNavigationPermissions() {
     link.hidden = !can(feature, link.dataset.action || 'view') && !alternateAllowed;
   });
 }
-const logo = '<img class="brand-logo" src="/img/logo.png" alt="52-Dental Clinic logo">';
-const head = (sub = '') => `<div class="brand">${sub ? '' : logo}<h1>52-Dental Clinic</h1><hr></div>`;
+const head = () => '';
 function printTemplateMarkup(template, section) {
   const mode = template[`${section}_mode`];
   if (!mode || mode === 'none') return '';
@@ -140,19 +159,71 @@ const profileReady = api('/me').then(profile => {
 
 const routes = {
   async main() {
-    const d = await api('/dashboard');
-    const rows = [['Payments today', money(d.payments_today), '$'], ['box (today)', money(d.box), '▣'], ['The patients', d.patients, '👥'],
-      ['Appointments today', d.appointments, '🔗'], ['User Management', d.users, '▤'], ["Today's reviews", d.reviews, '🔒']];
-    const dataKeys = ['payments_today', 'box', 'patients', 'appointments', 'users', 'reviews'];
-    const tiles = [['#/appointments', '📅', 'Appointments', 'appointments', 'view'], ['#/patients', '📁', 'files', 'patients', 'view'],
-      ['#/new-patient', '🦷', 'new patient', 'patients', 'create'], ['#/appointments', '📋', "Today's reviews", 'appointments', 'view'],
-      ['#/reports', '📊', 'Reports', 'reports', 'view'], ['#/payments', '💵', 'Payments', 'payments', 'view'],
-      ['#/box', '🧰', 'box', 'payments', 'view'], ['#/patients', '🔄', 'Pictures', 'patients', 'view'], ['#/users', '🧑‍⚕️', 'User Management', 'users', 'view']];
-    const visibleRows = rows.filter((_, index) => d[dataKeys[index]] !== null);
-    const visibleTiles = tiles.filter(tile => can(tile[3], tile[4]) ||
-      (tile[3] === 'appointments' && tile[4] === 'view' && can('appointments', 'create') && can('patients', 'view')));
-    return head() + `<div class="dash"><div class="stats">${visibleRows.map(r => `<div><span>${r[2]}</span><span>${r[0]}</span><span class="badge">${r[1]}</span></div>`).join('')}</div>
-      <div class="tiles">${visibleTiles.map(t => `<a class="tile" href="${t[0]}"><span class="ico">${t[1]}</span>${t[2]}</a>`).join('')}</div></div>`;
+    const [d, patients, appointments] = await Promise.all([
+      api('/dashboard'),
+      can('patients', 'view') ? api('/patients') : Promise.resolve([]),
+      can('appointments', 'view') ? api('/appointments') : Promise.resolve([])
+    ]);
+    const todayDate = today();
+    const todayAppointments = appointments.filter(appointment =>
+      day(appointment.appt_at) === todayDate && appointment.status === 'scheduled');
+    const upcoming = appointments.filter(appointment =>
+      day(appointment.appt_at) >= todayDate && appointment.status === 'scheduled').slice(0, 5);
+    const week = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - 6 + index);
+      return localDay(date);
+    });
+    const counts = week.map(date => appointments.filter(appointment =>
+      day(appointment.appt_at) === date && appointment.status === 'scheduled').length);
+    const maxCount = Math.max(1, ...counts);
+    const points = counts.map((count, index) => `${36 + index * 75},${110 - count / maxCount * 76}`);
+    const chartPath = points.map((point, index) => `${index ? 'L' : 'M'}${point}`).join(' ');
+    const recentPatients = patients.slice(0, 4);
+    const monthName = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const dateStrip = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      const mondayOffset = date.getDay() === 0 ? -6 : 1 - date.getDay();
+      date.setDate(date.getDate() + mondayOffset + index);
+      const key = localDay(date);
+      return `<span class="calendar-day${key === todayDate ? ' today' : ''}"><small>${date.toLocaleDateString(undefined, { weekday: 'short' })}</small><b>${date.getDate()}</b></span>`;
+    }).join('');
+    const statCards = [
+      d.patients !== null && `<div class="overview-stat"><span class="overview-icon coral">♙</span><div><small>Total patients</small><strong>${d.patients}</strong></div></div>`,
+      d.appointments !== null && `<div class="overview-stat"><span class="overview-icon blue">▣</span><div><small>Appointments today</small><strong>${d.appointments}</strong></div></div>`,
+      d.payments_today !== null && `<div class="overview-stat"><span class="overview-icon mint">$</span><div><small>Payments today</small><strong>${money(d.payments_today)}</strong></div></div>`
+    ].filter(Boolean).join('');
+    const appointmentRows = upcoming.length ? upcoming.map(appointment => {
+      const time = new Date(appointment.appt_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return `<a class="appointment-row" href="${can('patients', 'view') ? `#/patient/${appointment.patient_id}` : '#/appointments'}">
+        <time>${esc(time)}</time><span class="patient-initial">${esc((appointment.patient_name || '?')[0])}</span>
+        <span class="appointment-person"><b>${esc(appointment.patient_name)}</b><small>${esc(appointment.reason || 'Appointment')}</small></span><span class="appointment-arrow">›</span>
+      </a>`;
+    }).join('') : '<p class="dashboard-empty">No upcoming appointments.</p>';
+    return `<div class="dashboard">
+      <section class="dashboard-welcome"><div><p class="eyebrow">52 DENTAL CLINIC</p><h1>Dashboard overview</h1><p class="welcome-date">${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p></div>
+        <div class="dashboard-actions">${can('appointments', 'create') && can('patients', 'view') ? '<a class="btn dashboard-btn primary" href="#/appointments">＋ Make an appointment</a>' : ''}${can('patients', 'create') ? '<a class="btn dashboard-btn accent" href="#/new-patient">＋ Add patient</a>' : ''}</div>
+      </section>
+      <div class="dashboard-layout"><section class="dashboard-main">
+        <div class="overview-stats">${statCards}</div>
+        ${can('appointments', 'view') ? `<section class="dashboard-card chart-card"><div class="card-heading"><div><h2>Appointments statistics</h2><p>Scheduled appointments · last 7 days</p></div><a href="#/appointments" class="subtle-link">View schedule&nbsp; →</a></div>
+          <div class="chart-wrap"><div class="chart-y-labels"><span>${maxCount}</span><span>${Math.round(maxCount / 2)}</span><span>0</span></div><svg class="appointment-chart" viewBox="0 0 500 145" role="img" aria-label="Appointments over the last seven days">
+            <path class="chart-gridline" d="M30 34H490 M30 72H490 M30 110H490"></path><path class="chart-area" d="${chartPath} L486 120 L36 120 Z"></path><path class="chart-line" d="${chartPath}"></path>
+            ${points.map(point => { const [x, y] = point.split(','); return `<circle class="chart-point" cx="${x}" cy="${y}" r="3.5"></circle>`; }).join('')}
+          </svg></div><div class="chart-x-labels">${week.map(date => `<span>${new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span>`).join('')}</div>
+        </section>` : ''}
+        ${can('patients', 'view') ? `<section class="dashboard-card latest-card"><div class="card-heading"><div><h2>Latest patients</h2><p>Your most recently added patient records</p></div><a href="#/patients" class="subtle-link">View all&nbsp; →</a></div>
+          <div class="table-wrap"><table class="latest-table"><thead><tr><th>Patient</th><th>Date added</th><th>Phone</th><th></th></tr></thead><tbody>
+            ${recentPatients.length ? recentPatients.map(patient => `<tr><td><a class="patient-name" href="#/patient/${patient.id}">${esc(patient.name)}</a></td><td>${esc(day(patient.created_at))}</td><td>${esc(patient.phone || '—')}</td><td><a class="patient-view" href="#/patient/${patient.id}" aria-label="View ${esc(patient.name)}">›</a></td></tr>`).join('') : '<tr><td colspan="4" class="dashboard-empty">No patient records yet.</td></tr>'}
+          </tbody></table></div></section>` : ''}
+      </section>
+      <section class="dashboard-side">
+        ${can('appointments', 'view') ? `<section class="dashboard-card schedule-card"><div class="card-heading"><div><h2>${esc(monthName)}</h2><p>Weekly schedule</p></div><a href="#/appointments" class="calendar-link" aria-label="Open appointments">›</a></div>
+          <div class="calendar-strip">${dateStrip}</div><div class="upcoming-heading"><h3>Upcoming appointments</h3><span>${upcoming.length}</span></div><p class="schedule-date">Today · ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</p>
+          <div class="appointment-list">${appointmentRows}</div><a class="all-appointments" href="#/appointments">See all appointments&nbsp; →</a>
+        </section>` : '<section class="dashboard-card schedule-card"><h2>Welcome back</h2><p class="dashboard-empty">Choose a section from the menu to get started.</p></section>'}
+      </section></div>
+    </div>`;
   },
 
   'new-patient'() {
@@ -169,22 +240,225 @@ const routes = {
   },
 
   async patients() {
+    let currentPatients = [];
+    const patientColumns = [
+      ['id', 'ID'],
+      ['date', 'Date added'],
+      ['patient', 'Patient'],
+      ['gender', 'Gender'],
+      ['phone', 'Phone'],
+      ['actions', 'Actions']
+    ];
+    let savedColumns;
+    try {
+      savedColumns = JSON.parse(localStorage.getItem('patientColumns') || 'null');
+    } catch {
+      localStorage.removeItem('patientColumns');
+    }
+    const visibleColumns = new Set(Array.isArray(savedColumns)
+      ? savedColumns.filter(key => patientColumns.some(([column]) => column === key))
+      : patientColumns.map(([key]) => key));
+    if (!visibleColumns.size)
+      patientColumns.forEach(([key]) => visibleColumns.add(key));
+    const applyColumnVisibility = () => {
+      document.querySelectorAll('[data-column]').forEach(cell => {
+        cell.hidden = !visibleColumns.has(cell.dataset.column);
+      });
+      document.querySelectorAll('[data-column-toggle]').forEach(input => {
+        input.checked = visibleColumns.has(input.value);
+      });
+    };
     const render = tryDo(async () => {
-      const list = await api(`/patients?name=${encodeURIComponent($('#sn').value)}&from=${$('#sd').value}`);
-      $('#pt').innerHTML = list.length ? list.map((p, i) => `<tr class="${i === 0 ? 'alt' : ''}"><td><div class="row-actions">
-        ${can('patients', 'view') ? `<a class="btn sm" href="#/patient/${p.id}">View file</a>` : ''}
-        ${can('patients', 'edit') ? `<a class="btn sm dark" href="#/patient/${p.id}/edit">Edit file</a>` : ''}
-        ${can('patients', 'delete') ? `<button class="btn sm red" data-del="${p.id}">delete file</button>` : ''}</div></td><td>${esc(day(p.created_at))}</td><td>${esc(p.phone)}</td><td>${esc(p.name)}</td><td>${p.id}</td></tr>`).join('')
-        : `<tr><td colspan="5" class="empty">No patient files match. Try a different name or clear the date.</td></tr>`;
+      const params = new URLSearchParams({
+        search: $('#sn').value.trim(),
+        from: $('#sd').value,
+        gender: $('#sg').value
+      });
+      const list = await api(`/patients?${params}`);
+      currentPatients = list;
+      $('#pt').innerHTML = list.length ? list.map(patient => `<tr>
+        <td class="patient-id" data-column="id">${patient.id}</td>
+        <td data-column="date">${esc(day(patient.created_at))}</td>
+        <td data-column="patient"><div class="patient-name-cell"><span class="patient-table-avatar">${esc((patient.name || '?')[0])}</span><span><a class="patient-name" href="#/patient/${patient.id}">${esc(patient.name)}</a>${patient.note ? `<small>${esc(patient.note)}</small>` : ''}</span></div></td>
+        <td data-column="gender"><span class="gender-pill${patient.gender === 'Female' ? ' female' : ''}">${esc(patient.gender || '—')}</span></td>
+        <td data-column="phone">${patient.phone ? `<a class="patient-phone" href="tel:${esc(patient.phone)}">${esc(patient.phone)}</a>` : '—'}</td>
+        <td data-column="actions"><div class="row-actions patient-actions">
+          ${can('patients', 'view') ? `<a class="patient-action view" href="#/patient/${patient.id}" aria-label="View ${esc(patient.name)}" title="View patient">↗</a>` : ''}
+          ${can('patients', 'edit') ? `<a class="patient-action edit" href="#/patient/${patient.id}/edit" aria-label="Edit ${esc(patient.name)}" title="Edit patient">✎</a>` : ''}
+          ${can('patients', 'delete') ? `<button class="patient-action delete" data-del="${patient.id}" aria-label="Delete ${esc(patient.name)}" title="Delete patient">⌫</button>` : ''}</div></td>
+      </tr>`).join('')
+        : `<tr><td colspan="6" class="empty">No patient files match. Try another search or clear the filters.</td></tr>`;
+      applyColumnVisibility();
       document.querySelectorAll('[data-del]').forEach(b => b.onclick = tryDo(async () => {
         if (!confirm(ClinicI18n.translate('Delete this patient file and all its sessions and payments?'))) return;
         await api('/patients/' + b.dataset.del, { method: 'DELETE' }); toast('File deleted'); render();
       }));
     });
-    setTimeout(() => { $('#go').onclick = render; $('#sn').oninput = render; render(); });
-    return head(1) + `<h2 class="title"><b>Patient files |</b> 📋</h2><div class="crumb">The patients / Patient records</div>
-      <div class="panel"><div class="filters"><button class="btn" id="go">research 🔍</button><input class="field" id="sd" type="date" aria-label="File date from"><input class="field" id="sn" placeholder="Patient name" aria-label="Patient name"></div></div>
-      <div class="panel"><table><thead><tr><th>Action</th><th>File History</th><th>File No</th><th>Patient name</th><th>patient number</th></tr></thead><tbody id="pt"></tbody></table></div>`;
+    setTimeout(() => {
+      $('#patientFilterToggle').onclick = () => {
+        $('#patientFilters').hidden = !$('#patientFilters').hidden;
+        $('#patientFilterToggle').setAttribute('aria-expanded', String(!$('#patientFilters').hidden));
+      };
+      $('#patientColumnsToggle').onclick = () => {
+        $('#patientColumnsMenu').hidden = !$('#patientColumnsMenu').hidden;
+        $('#patientColumnsToggle').setAttribute('aria-expanded', String(!$('#patientColumnsMenu').hidden));
+      };
+      document.querySelectorAll('[data-column-toggle]').forEach(input => {
+        input.onchange = () => {
+          if (input.checked) visibleColumns.add(input.value);
+          else if (visibleColumns.size > 1) visibleColumns.delete(input.value);
+          else input.checked = true;
+          localStorage.setItem('patientColumns', JSON.stringify([...visibleColumns]));
+          applyColumnVisibility();
+        };
+      });
+      $('#sd').onchange = render;
+      $('#sg').onchange = render;
+      let searchTimer;
+      $('#sn').oninput = () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(render, 180);
+      };
+      const savedSearch = sessionStorage.getItem('patientSearch');
+      if (savedSearch) {
+        $('#sn').value = savedSearch;
+        sessionStorage.removeItem('patientSearch');
+      }
+      render();
+      $('#patientImportFile').onchange = tryDo(async event => {
+        const file = event.target.files[0];
+        if (!file) return;
+        try {
+          const ExcelJS = await loadExcelJS();
+          const normalizeHeader = value => String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          let headers;
+          let dataRows;
+          if (file.name.toLowerCase().endsWith('.csv')) {
+            const text = (await file.text()).replace(/^\uFEFF/, '');
+            const matrix = [];
+            let row = [];
+            let value = '';
+            let quoted = false;
+            for (let index = 0; index < text.length; index++) {
+              const character = text[index];
+              if (quoted) {
+                if (character === '"' && text[index + 1] === '"') {
+                  value += '"';
+                  index++;
+                } else if (character === '"') quoted = false;
+                else value += character;
+              } else if (character === '"' && value === '') quoted = true;
+              else if (character === ',') {
+                row.push(value);
+                value = '';
+              } else if (character === '\n') {
+                row.push(value.replace(/\r$/, ''));
+                if (row.some(cell => cell.trim())) matrix.push(row);
+                row = [];
+                value = '';
+              } else value += character;
+            }
+            if (quoted) throw new Error('The CSV file contains an unfinished quoted field.');
+            if (value || row.length) {
+              row.push(value.replace(/\r$/, ''));
+              if (row.some(cell => cell.trim())) matrix.push(row);
+            }
+            headers = (matrix.shift() || []).map(normalizeHeader);
+            dataRows = matrix.map(cells => Object.fromEntries(
+              headers.map((header, index) => [header, String(cells[index] ?? '').trim()])
+            ));
+          } else {
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.load(await file.arrayBuffer());
+            const worksheet = workbook.worksheets[0];
+            if (!worksheet) throw new Error('The Excel file does not contain a worksheet.');
+            headers = worksheet.getRow(1).values.slice(1).map(normalizeHeader);
+            dataRows = [];
+            for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
+              const row = worksheet.getRow(rowNumber);
+              dataRows.push(Object.fromEntries(headers.map((header, index) => [
+                header,
+                String(row.getCell(index + 1).text || '').trim()
+              ])));
+            }
+          }
+          const validRows = [];
+          let invalidRows = 0;
+          for (const values of dataRows) {
+            const name = values.name || values.patientname || values.fullname;
+            const phone = values.phone || values.phonenumber || values.telephone || values.telephonenumber || values.contact;
+            if (!name && !phone) continue;
+            if (!name || !phone) {
+              invalidRows++;
+              continue;
+            }
+            const rawGender = (values.gender || '').toLowerCase();
+            if (rawGender && !['male', 'female'].includes(rawGender)) {
+              invalidRows++;
+              continue;
+            }
+            const gender = rawGender === 'male' ? 'Male' : rawGender === 'female' ? 'Female' : null;
+            validRows.push({ name, phone, gender, note: values.note || values.notes || '' });
+          }
+          if (!validRows.length) throw new Error('No importable rows found. Include Name and Phone columns.');
+          if (validRows.length > 500) throw new Error('Import up to 500 patient records at a time.');
+          if (!confirm(`Import ${validRows.length} patient${validRows.length === 1 ? '' : 's'}? Existing patients with matching phone numbers will be skipped.${invalidRows ? ` ${invalidRows} incomplete row${invalidRows === 1 ? '' : 's'} will be ignored.` : ''}`)) return;
+          const result = await api('/patients/import', { method: 'POST', body: { patients: validRows } });
+          toast(`Import complete: ${result.created} added, ${result.skipped} duplicate${result.skipped === 1 ? '' : 's'} skipped`);
+          await render();
+        } finally {
+          event.target.value = '';
+        }
+      });
+      $('#patientExport').onclick = tryDo(async () => {
+        const ExcelJS = await loadExcelJS();
+        const exportColumns = patientColumns.filter(([key]) => key !== 'actions' && visibleColumns.has(key));
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Patients');
+        worksheet.columns = exportColumns.map(([key, header]) => ({
+          header,
+          key,
+          width: key === 'patient' ? 28 : key === 'phone' ? 18 : 14
+        }));
+        worksheet.addRows(currentPatients.map(patient => Object.fromEntries(exportColumns.map(([key]) => [
+          key,
+          key === 'id' ? patient.id
+            : key === 'date' ? day(patient.created_at)
+              : key === 'patient' ? patient.name
+                : key === 'gender' ? patient.gender || ''
+                  : patient.phone || ''
+        ]))));
+        const buffer = await workbook.xlsx.writeBuffer();
+        const download = document.createElement('a');
+        download.href = URL.createObjectURL(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+        download.download = 'patients.xlsx';
+        document.body.append(download);
+        download.click();
+        download.remove();
+        setTimeout(() => URL.revokeObjectURL(download.href), 0);
+      });
+    });
+    return head(1) + `<section class="patients-page">
+      <header class="patients-page-heading"><div><p class="patients-eyebrow">PATIENT MANAGEMENT</p><h1>Patients</h1></div>${can('patients', 'create') ? '<a class="btn patients-add" href="#/new-patient">＋ Add patient</a>' : ''}</header>
+      <div class="patients-toolbar">
+        <label class="patient-search"><span aria-hidden="true">⌕</span><input id="sn" type="search" placeholder="Search name, phone or patient ID" aria-label="Search patients by name, phone or ID"></label>
+        <div class="patients-toolbar-actions">
+          <div class="patient-toolbar-menu"><button class="patient-toolbar-button" id="patientColumnsToggle" type="button" aria-expanded="false">☷ Columns</button>
+            <div class="patient-column-menu" id="patientColumnsMenu" hidden>${patientColumns.map(([key, label]) => `<label><input type="checkbox" data-column-toggle value="${key}" checked>${label}</label>`).join('')}</div>
+          </div>
+          <button class="patient-toolbar-button" id="patientFilterToggle" type="button" aria-expanded="false">Filters</button>
+          ${can('patients', 'create') ? `<label class="patient-toolbar-button patient-import-button" for="patientImportFile">⇧ Import Excel<input id="patientImportFile" type="file" accept=".xlsx,.csv" hidden></label>` : ''}
+          <button class="patient-toolbar-button" id="patientExport" type="button">⇩ Export Excel</button>
+        </div>
+      </div>
+      <div class="patients-filter-panel" id="patientFilters" hidden>
+        <label class="patient-date-filter"><span>Created from</span><input class="field" id="sd" type="date" aria-label="Patients created from"></label>
+        <label class="patient-date-filter"><span>Gender</span><select class="field" id="sg" aria-label="Filter by gender"><option value="">All genders</option><option value="Male">Male</option><option value="Female">Female</option></select></label>
+      </div>
+      <section class="patients-table-card"><div class="patients-table-heading"><div><h2>Patient records</h2><p>Browse and manage clinic patient files</p></div></div>
+        <div class="table-wrap"><table class="patient-list-table"><thead><tr>${patientColumns.map(([key, label]) => `<th data-column="${key}">${label}</th>`).join('')}</tr></thead><tbody id="pt"></tbody></table></div>
+      </section>
+    </section>`;
   },
 
   async patient(id, sub) {
@@ -195,25 +469,72 @@ const routes = {
       $('#as') && ($('#as').onclick = tryDo(async () => { const s = await api(`/patients/${id}/sessions`, { method: 'POST', body: {} }); location.hash = '#/session/' + s.id; }));
       $('#df') && ($('#df').onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this patient file?'))) { await api('/patients/' + id, { method: 'DELETE' }); location.hash = '#/patients'; } }));
       document.querySelectorAll('[data-ds]').forEach(b => b.onclick = tryDo(async () => { if (confirm(ClinicI18n.translate('Delete this session?'))) { await api('/sessions/' + b.dataset.ds, { method: 'DELETE' }); routeNow(); } }));
+      $('#patientCreateAppointment')?.addEventListener('click', () => {
+        sessionStorage.setItem('appointmentPatient', String(id));
+        location.hash = '#/appointments';
+      });
+      document.querySelectorAll('[data-patient-tab]').forEach(tab => tab.addEventListener('click', () => {
+        document.querySelectorAll('[data-patient-tab]').forEach(item => {
+          const selected = item === tab;
+          item.setAttribute('aria-selected', String(selected));
+          item.tabIndex = selected ? 0 : -1;
+        });
+        document.querySelectorAll('[data-patient-panel]').forEach(panel => {
+          panel.hidden = panel.id !== tab.getAttribute('aria-controls');
+        });
+      }));
     });
-    const ro = edit ? '' : 'readonly';
-    return `<div class="panel"><div style="text-align:center"><div class="av" style="width:150px;height:150px;border-radius:50%;background:#53b6e3;color:#fff;margin:0 auto;display:grid;place-items:center;font-size:4rem">${esc(p.name[0])}</div>
-      <h2 class="title" style="margin-top:14px">${edit ? 'edit file' : 'patient file'} | <b>${esc(p.name)}</b></h2></div>
-      <form id="ef"><div class="grid2"><div><label>patient number</label><input class="field" value="${p.id}" readonly></div><div><label>Patient name</label><input class="field" name="name" value="${esc(p.name)}" ${ro}></div></div>
-      <div class="grid2"><div><label>Telephone number</label><input class="field" name="phone" value="${esc(p.phone)}" ${ro}></div><div><label>entry date</label><input class="field" value="${esc(String(p.created_at).replace('T', ' ').slice(0, 19))}" readonly></div></div>
-      <label>patient's gender</label>${edit ? `<select class="field" name="gender"><option ${p.gender === 'Male' ? 'selected' : ''}>Male</option><option ${p.gender === 'Female' ? 'selected' : ''}>Female</option></select>` : `<input class="field" value="${esc(p.gender || '')}" readonly>`}
-      <label style="margin-top:16px">Doctor's notes</label><textarea class="field" name="note" ${ro}>${esc(p.note || '')}</textarea>
-      ${edit && can('patients', 'edit') ? '<p style="text-align:center"><button class="btn">Save changes</button></p>' : ''}</form></div>
-      <div class="grid2" style="max-width:1100px;margin:0 auto"><div class="panel"><h3 style="text-align:center;font-weight:500">sessions</h3>
-      ${can('sessions', 'view') ? `<table><thead><tr><th>the details</th><th>session date</th><th>cost</th></tr></thead><tbody>${p.sessions.map(s => `<tr><td><div class="row-actions">
-        ${can('sessions', 'delete') ? `<button class="btn sm red" data-ds="${s.id}">delete session</button>` : ''}
-        <a class="btn sm" href="#/session/${s.id}">View details</a></div></td><td>${esc(day(s.session_date))}</td><td>${money(s.cost)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty" style="color:#777">No sessions yet. Add the first one.</td></tr>'}</tbody></table>`
-        : '<p class="muted">You do not have permission to view sessions.</p>'}</div>
-      <div class="panel"><h3 style="text-align:center;font-weight:500">the procedures</h3><table>
-      ${can('patients', 'edit') ? `<tr><td><a href="#/patient/${id}/edit" style="color:inherit;text-decoration:none">Edit file</a></td></tr>` : ''}
-      ${can('patients', 'delete') ? '<tr><td><a href="#" id="df" style="color:var(--red);text-decoration:none">delete file</a></td></tr>' : ''}
-      ${can('sessions', 'create') && can('sessions', 'edit') ? '<tr><td><a href="#" id="as" style="color:inherit;text-decoration:none">add session</a></td></tr>' : ''}
-      ${can('reports', 'view') ? `<tr><td><a href="#/statement/${id}" style="color:var(--green);text-decoration:none">Account statement</a></td></tr>` : ''}</table></div></div>`;
+    const appointments = p.appointments || [];
+    const sessions = p.sessions || [];
+    const createdAt = String(p.created_at || '').replace('T', ' ').slice(0, 16);
+    return `<section class="patient-file-page">
+      <nav class="patient-breadcrumb" aria-label="Breadcrumb"><a href="#/patients">Patient list</a><span aria-hidden="true">›</span><span>Patient file</span></nav>
+      <header class="patient-profile">
+        <div class="patient-profile-main"><span class="patient-profile-avatar" aria-hidden="true">${esc((p.name || '?')[0].toUpperCase())}</span>
+          <div class="patient-profile-copy"><p class="patients-eyebrow">PATIENT FILE · #${esc(p.id)}</p><h1>${esc(p.name)}</h1><p>${esc(p.phone || 'No phone number')}${p.gender ? ` <span>·</span> ${esc(p.gender)}` : ''}</p></div>
+        </div>
+        <div class="patient-profile-actions">
+          ${can('appointments', 'create') && can('patients', 'view') ? '<button class="btn patient-book-button" id="patientCreateAppointment" type="button">＋ Create appointment</button>' : ''}
+          ${can('patients', 'edit') ? `<a class="patient-secondary-action" href="#/patient/${id}/edit">Edit file</a>` : ''}
+          ${can('patients', 'delete') ? '<button class="patient-secondary-action patient-delete-action" id="df" type="button">Delete file</button>' : ''}
+        </div>
+      </header>
+      <div class="patient-file-tabs" role="tablist" aria-label="Patient file sections">
+        <button class="patient-file-tab" type="button" role="tab" id="patientInfoTab" aria-controls="patientInfoPanel" aria-selected="true" data-patient-tab>Patient information</button>
+        ${can('appointments', 'view') ? '<button class="patient-file-tab" type="button" role="tab" id="patientAppointmentsTab" aria-controls="patientAppointmentsPanel" aria-selected="false" tabindex="-1" data-patient-tab>Appointment history</button>' : ''}
+        <button class="patient-file-tab" type="button" role="tab" id="patientMedicalTab" aria-controls="patientMedicalPanel" aria-selected="false" tabindex="-1" data-patient-tab>Medical record</button>
+      </div>
+      <section class="patient-file-panel" id="patientInfoPanel" role="tabpanel" aria-labelledby="patientInfoTab" data-patient-panel>
+        <div class="patient-info-card"><div class="patient-section-heading"><div><h2>Patient information</h2><p>Personal details saved in this patient file</p></div></div>
+          ${edit ? `<form id="ef" class="patient-edit-form">
+            <label><span>Patient ID</span><input class="field" value="${esc(p.id)}" readonly></label>
+            <label><span>Full name</span><input class="field" name="name" value="${esc(p.name)}" required></label>
+            <label><span>Phone number</span><input class="field" name="phone" value="${esc(p.phone || '')}" required></label>
+            <label><span>Gender</span><select class="field" name="gender"><option value="" ${!p.gender ? 'selected' : ''}>Not specified</option><option ${p.gender === 'Male' ? 'selected' : ''}>Male</option><option ${p.gender === 'Female' ? 'selected' : ''}>Female</option></select></label>
+            <label class="patient-note-field"><span>Doctor's notes</span><textarea class="field" name="note" rows="4">${esc(p.note || '')}</textarea></label>
+            <div class="patient-form-actions"><a class="patient-secondary-action" href="#/patient/${id}">Cancel</a><button class="btn patient-book-button" type="submit">Save changes</button></div>
+          </form>` : `<dl class="patient-info-grid">
+            <div><dt>Full name</dt><dd>${esc(p.name)}</dd></div><div><dt>Phone number</dt><dd>${esc(p.phone || '—')}</dd></div>
+            <div><dt>Patient ID</dt><dd>#${esc(p.id)}</dd></div><div><dt>Gender</dt><dd>${esc(p.gender || 'Not specified')}</dd></div>
+            <div><dt>Date added</dt><dd>${esc(createdAt || '—')}</dd></div>
+          </dl>
+          <section class="patient-note-section"><h3>Doctor's notes</h3><p>${p.note ? esc(p.note) : '<span class="patient-muted">No notes have been added to this patient file.</span>'}</p></section>`}
+        </div>
+        ${!edit && can('reports', 'view') ? `<a class="patient-statement-link" href="#/statement/${id}">View account statement <span aria-hidden="true">→</span></a>` : ''}
+      </section>
+      ${can('appointments', 'view') ? `<section class="patient-file-panel" id="patientAppointmentsPanel" role="tabpanel" aria-labelledby="patientAppointmentsTab" data-patient-panel hidden>
+        <div class="patient-info-card"><div class="patient-section-heading"><div><h2>Appointment history</h2><p>Appointments associated with this patient</p></div></div>
+          ${appointments.length ? `<div class="table-wrap"><table class="patient-history-table"><thead><tr><th>Date and time</th><th>Reason</th><th>Status</th></tr></thead><tbody>${appointments.map(appointment => `<tr><td>${esc(String(appointment.appt_at).replace('T', ' ').slice(0, 16))}</td><td>${esc(appointment.reason || '—')}</td><td><span class="patient-status-pill ${esc(appointment.status)}">${esc(appointment.status)}</span></td></tr>`).join('')}</tbody></table></div>` : '<p class="patient-empty-state">No appointments are recorded for this patient yet.</p>'}
+        </div>
+      </section>` : ''}
+      <section class="patient-file-panel" id="patientMedicalPanel" role="tabpanel" aria-labelledby="patientMedicalTab" data-patient-panel hidden>
+        <div class="patient-info-card"><div class="patient-section-heading"><div><h2>Medical record</h2><p>Dental sessions and treatment notes recorded for this patient</p></div>
+          ${can('sessions', 'create') && can('sessions', 'edit') ? '<button class="btn patient-book-button" id="as" type="button">＋ Add session</button>' : ''}
+        </div>
+          ${can('sessions', 'view') ? sessions.length ? `<div class="patient-session-list">${sessions.map(session => `<article class="patient-session-card"><div class="patient-session-date"><span>Session</span><strong>${esc(day(session.session_date))}</strong></div><div class="patient-session-details"><h3>Dental treatment session</h3><p>${session.notes ? esc(session.notes) : 'No treatment notes recorded.'}</p><span>Cost: ${money(session.cost)}</span></div><div class="patient-session-actions"><a class="patient-secondary-action" href="#/session/${session.id}">View details</a>${can('sessions', 'delete') ? `<button class="patient-secondary-action patient-delete-action" data-ds="${session.id}" type="button">Delete</button>` : ''}</div></article>`).join('')}</div>` : '<p class="patient-empty-state">No medical sessions recorded for this patient yet.</p>' : '<p class="patient-empty-state">You do not have permission to view medical sessions.</p>'}
+        </div>
+      </section>
+    </section>`;
   },
 
   async statement(id) {
@@ -330,8 +651,7 @@ const routes = {
       }));
       paint();
     });
-    return printTemplateMarkup(template, 'header') + `<div class="brand"><h1>52-Dental Clinic</h1><hr></div>
-      <div class="panel"><h2 class="title">${esc(s.patient_name)} | <b>Session</b></h2>
+    return printTemplateMarkup(template, 'header') + `<div class="panel"><h2 class="title">${esc(s.patient_name)} | <b>Session</b></h2>
       <section class="service-picker"><h3>Select Service</h3><p class="muted">Choose treatment</p><p class="muted">Record payments from the invoice to track balances and partial payments.</p>
         <div class="service-grid">${serviceCards || '<p class="empty">No services available.</p>'}</div>
         <div class="service-summary"><span><span data-i18n-label="service-duration">Selected duration</span>: <b id="serviceDuration">0 min</b></span><span><span data-i18n-label="service-total">Session total</span>: <b id="serviceTotal">${money(s.cost)}</b></span></div>
@@ -555,6 +875,9 @@ const routes = {
       }
       if (canCreateAppointment) {
         const pts = await api('/patients'); $('#ap').innerHTML = pts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+        const selectedPatient = sessionStorage.getItem('appointmentPatient');
+        if (selectedPatient && pts.some(patient => String(patient.id) === selectedPatient)) $('#ap').value = selectedPatient;
+        sessionStorage.removeItem('appointmentPatient');
         $('#af').onsubmit = tryDo(async e => { e.preventDefault(); await api('/appointments', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); toast('Appointment booked'); render(); });
       }
     });

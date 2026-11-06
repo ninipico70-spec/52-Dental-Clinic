@@ -1,14 +1,27 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>52-Dental Clinic</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Noto+Sans+Khmer:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Khmer:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css"></head>
 <body><div class="shell">
-<aside><div class="me"><div class="av" id="av"></div><div>Happy day</div><div id="uname" style="font-weight:600"></div></div>
-<div class="language-switch"><label for="languageSelect">Language / ភាសា</label><select id="languageSelect" data-language aria-label="Language"><option value="en">English</option><option value="km">ខ្មែរ</option></select></div>
-<nav id="nav">
-<a href="#/main">🏠 Main</a><a href="#/new-patient" data-feature="patients" data-action="create">➕ new patient</a><a href="#/invoices" data-feature="invoices" data-alternate-action="create" data-requires-feature="patients">🧾 Billing &amp; Invoices</a><a href="#/payments" data-feature="payments">💳 Payments</a>
-<a href="#/expenses" data-feature="expenses" data-alternate-action="create">📎 Expenses</a><a href="#/patients" data-feature="patients">🔍 search</a><a href="#/services" data-feature="services" data-alternate-action="create">🦷 Services</a><a href="#/users" data-feature="users">👤 User Management</a>
-<a href="#/settings" data-feature="settings">🔧 Settings</a><a href="#" id="out">⎋ sign out</a></nav></aside>
+<aside class="sidebar">
+  <a class="sidebar-brand" href="#/main"><img src="/img/logo.png" alt=""><span><b>52</b><small>Dental Clinic</small></span></a>
+  <nav id="nav" aria-label="Main navigation">
+    <a href="#/main"><span class="nav-icon">▦</span>Dashboard</a>
+    <a href="#/patients" data-feature="patients"><span class="nav-icon">♙</span>Patients</a>
+    <a href="#/appointments" data-feature="appointments"> <span class="nav-icon">▣</span>Appointments</a>
+    <a href="#/services" data-feature="services" data-alternate-action="create"><span class="nav-icon">✚</span>Services</a>
+    <a href="#/invoices" data-feature="invoices" data-alternate-action="create" data-requires-feature="patients"><span class="nav-icon">▤</span>Billing &amp; Invoices</a>
+    <a href="#/payments" data-feature="payments"><span class="nav-icon">＄</span>Payments</a>
+    <a href="#/expenses" data-feature="expenses" data-alternate-action="create"><span class="nav-icon">↗</span>Expenses</a>
+    <a href="#/users" data-feature="users"><span class="nav-icon">♧</span>User Management</a>
+    <a href="#/settings" data-feature="settings"><span class="nav-icon">⚙</span>Settings</a>
+  </nav>
+  <div class="sidebar-bottom">
+    <div class="language-switch"><label for="languageSelect">Language / ភាសា</label><select id="languageSelect" data-language aria-label="Language"><option value="en">English</option><option value="km">ខ្មែរ</option></select></div>
+    <div class="me"><div class="av" id="av"></div><div class="me-copy"><small>Signed in as</small><div id="uname"></div></div></div>
+    <a class="logout-link" href="#" id="out"><span class="nav-icon">↪</span>Log out</a>
+  </div>
+</aside>
 <main id="app"></main></div>
 <script src="/js/i18n.js"></script>
 <script src="/js/config.js"></script>
